@@ -68,7 +68,7 @@ const CACHE_TTL_MS = 60_000;
 const TUZI_PERSONAL_SETTINGS_URL =
   'https://api.tu-zi.com/console/personal';
 const TUZI_SYSTEM_TOKEN_GUIDE_URL =
-  'https://wiki.tu-zi.com/doc/opentuid-ZUZUoZjTgm';
+  'https://wiki.tu-zi.com/s/8c61a536-7a59-4410-a5e2-8dab3d041958/zh-cn/doc/opentuid-ZUZUoZjTgm';
 const TUZI_TOP_UP_URL = 'https://api.tu-zi.com/console/topup';
 type TuziAccountView = 'balance' | 'logs';
 type TuziLogColumnId =

@@ -238,7 +238,7 @@ describe('TuziAccountPanel', () => {
       name: '查看教程',
     });
     expect(tokenGuideLink.getAttribute('href')).toBe(
-      'https://wiki.tu-zi.com/doc/opentuid-ZUZUoZjTgm'
+      'https://wiki.tu-zi.com/s/8c61a536-7a59-4410-a5e2-8dab3d041958/zh-cn/doc/opentuid-ZUZUoZjTgm'
     );
     expect(tokenGuideLink.getAttribute('target')).toBe('_blank');
     expect(tokenGuideLink.getAttribute('rel')).toBe('noopener noreferrer');
