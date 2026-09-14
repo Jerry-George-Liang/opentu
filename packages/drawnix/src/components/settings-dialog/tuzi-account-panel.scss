@@ -238,13 +238,30 @@
     font-size: 12px;
   }
 
+  &__token-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
   &__token-link {
-    margin-left: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    min-height: 28px;
+    padding: 4px 9px;
+    border: 1px solid #b7cae7;
+    border-radius: 6px;
+    background: #ffffff;
     color: #2563eb;
-    text-decoration: underline;
-    text-underline-offset: 2px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
 
     &:hover {
+      border-color: #8eadd7;
+      background: #edf4ff;
       color: #1d4ed8;
     }
   }
@@ -422,18 +439,19 @@
       border-left: 1px solid var(--tuzi-panel-border);
     }
 
-    span,
-    strong {
+    > span,
+    > strong {
       display: block;
     }
 
-    span {
+    > span {
       color: var(--tuzi-panel-muted);
       font-size: 12px;
       font-weight: 600;
     }
 
-    strong {
+    > strong,
+    .tuzi-account-panel__metric-value > strong {
       margin-top: 6px;
       overflow: hidden;
       color: #111827;
@@ -445,10 +463,81 @@
     }
   }
 
+  &__metric-value {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  &__top-up {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 4px;
+    min-height: 30px;
+    padding: 5px 9px;
+    border: 1px solid #3478e5;
+    border-radius: 6px;
+    color: #1d5fbe;
+    background: #f5f9ff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    text-decoration: none;
+    transition: background-color 0.14s ease, border-color 0.14s ease,
+      color 0.14s ease;
+
+    &:hover {
+      border-color: #1d5fbe;
+      color: #174d9b;
+      background: #eaf2ff;
+    }
+
+    &:focus-visible {
+      outline: 2px solid #84b6ff;
+      outline-offset: 1px;
+    }
+  }
+
   &__section {
     margin-top: 22px;
     padding-top: 20px;
     border-top: 1px solid var(--tuzi-panel-border);
+  }
+
+  &__add-provider {
+    min-height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 5px 10px;
+    border: 1px solid #b7cae7;
+    border-radius: 6px;
+    color: #1d5fbe;
+    background: #ffffff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+
+    &:hover:not(:disabled) {
+      border-color: #8eadd7;
+      background: #edf4ff;
+      color: #174d9b;
+    }
+
+    &:focus-visible {
+      outline: 2px solid #84b6ff;
+      outline-offset: 1px;
+    }
+
+    &:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
   }
 
   &__provider-selection {
@@ -757,10 +846,7 @@
   }
 
   &__log-table {
-    max-height: min(580px, calc(100vh - 250px));
-    border: 1px solid var(--tuzi-panel-border);
-    border-radius: 8px;
-    overflow: auto;
+    overflow: visible;
     background: #fff;
   }
 
@@ -1017,6 +1103,59 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+  }
+
+  &__log-preview {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    display: block;
+    justify-self: start;
+    overflow: visible;
+
+    img {
+      width: 48px;
+      height: 48px;
+      display: block;
+      border: 1px solid #d0d5dd;
+      border-radius: 6px;
+      background: #f8fafc;
+      cursor: grab;
+      object-fit: cover;
+
+      &:active {
+        cursor: grabbing;
+      }
+
+      &:focus-visible {
+        outline: 2px solid #84b6ff;
+        outline-offset: 1px;
+      }
+    }
+
+    > span {
+      position: absolute;
+      right: -5px;
+      bottom: -5px;
+      min-width: 20px;
+      height: 20px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 5px;
+      border: 2px solid #fff;
+      border-radius: 10px;
+      color: #fff;
+      background: #344054;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1;
+    }
+  }
+
+  &__log-preview-empty {
+    color: #98a2b3;
+    font-size: 11px;
   }
 
   &__log-duration {

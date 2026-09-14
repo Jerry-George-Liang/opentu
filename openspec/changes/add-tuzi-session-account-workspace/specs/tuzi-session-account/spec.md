@@ -32,6 +32,39 @@ The system SHALL reuse existing Tuzi API log endpoints and SHALL scope every res
 - **WHEN** one user requests logs, summaries, or usage statistics
 - **THEN** the response SHALL contain no records or aggregates belonging to another user
 
+### Requirement: User-visible generated-image previews
+
+The system SHALL show generated-image previews for authenticated Tuzi usage-log records only when the user-scoped response contains a validated, user-visible generated-result URL.
+
+#### Scenario: Generated image is available
+
+- **GIVEN** a usage-log record contains one or more user-visible generated-image result URLs
+- **WHEN** the recent-calls table renders the record
+- **THEN** the preview column SHALL show the first generated image and indicate additional results
+- **AND** a failed candidate SHALL advance to the next validated result URL without sending the page Referer
+- **AND** the table SHALL NOT decode every result from a multi-image request at once
+
+#### Scenario: Record has no recoverable image
+
+- **GIVEN** a record is a failed request, a non-image request, contains only request/reference images, or has no valid user-visible result URL
+- **WHEN** the recent-calls table renders the record
+- **THEN** the preview column SHALL show a stable empty state, or an image-expired state when retained result URLs can no longer be loaded
+- **AND** the client SHALL NOT infer a generated result from unrelated URLs
+
+#### Scenario: Preview image is dragged to the canvas
+
+- **GIVEN** a generated-image preview has a validated result URL and the current canvas is available
+- **WHEN** the user drags the preview onto a canvas position
+- **THEN** the system SHALL insert the image at that drop position through the existing canvas URL-drop path
+- **AND** drag data SHALL contain no API key, access token, user identifier, raw log payload, or Base64 image body
+
+#### Scenario: Local data was cleared
+
+- **GIVEN** local task, asset, cache, and canvas data were cleared while Tuzi authentication was preserved
+- **WHEN** the user reopens recent calls
+- **THEN** the system SHALL reload previews from Tuzi's server-retained user-scoped log records
+- **AND** results without a retained usable URL SHALL remain unavailable rather than being presented as recoverable
+
 ### Requirement: Credentialed Origin allowlist
 
 Tuzi API SHALL allow credentialed cross-origin requests only from explicitly configured Origins and SHALL vary responses by Origin.
@@ -65,6 +98,13 @@ The system SHALL derive OpenTu managed Providers from the authenticated user's a
 - **WHEN** an authenticated user does not select an otherwise authorized group during first connection or token replacement
 - **THEN** Tuzi API SHALL NOT create a managed Token for that group
 - **AND** OpenTu SHALL NOT create or display a managed Provider or replacement-Key control for that group
+
+#### Scenario: Add another authorized group after connection
+
+- **GIVEN** an authenticated user already has one or more connected managed group Providers
+- **WHEN** the user reopens the authorized-group selector and selects another group
+- **THEN** OpenTu SHALL preserve the existing group selections and ensure the newly selected managed Provider
+- **AND** OpenTu SHALL synchronize the resulting Provider set and its available models
 
 #### Scenario: Unauthorized group
 

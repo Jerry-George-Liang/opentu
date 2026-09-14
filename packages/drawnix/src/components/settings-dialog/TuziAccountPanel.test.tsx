@@ -125,6 +125,13 @@ describe('TuziAccountPanel', () => {
       requestId: `req-${index + 1}`,
       responseId: index === 0 ? 'resp-1' : '',
       upstreamRequestId: '',
+      generatedImageUrls:
+        index === 0
+          ? [
+              'https://example.com/generated.png',
+              'https://example.com/generated-2.png',
+            ]
+          : [],
       other:
         index === 0
           ? {
@@ -217,6 +224,32 @@ describe('TuziAccountPanel', () => {
     expect(await screen.findByText('令牌已连接')).not.toBeNull();
     expect(screen.getByText('已同步')).not.toBeNull();
     expect(screen.getByText('累计用量')).not.toBeNull();
+    const personalSettingsLink = screen.getByRole('link', {
+      name: '获取 ID 和个人令牌',
+    });
+    expect(personalSettingsLink.getAttribute('href')).toBe(
+      'https://api.tu-zi.com/console/personal'
+    );
+    expect(personalSettingsLink.getAttribute('target')).toBe('_blank');
+    expect(personalSettingsLink.getAttribute('rel')).toBe(
+      'noopener noreferrer'
+    );
+    const tokenGuideLink = screen.getByRole('link', {
+      name: '查看教程',
+    });
+    expect(tokenGuideLink.getAttribute('href')).toBe(
+      'https://wiki.tu-zi.com/doc/opentuid-ZUZUoZjTgm'
+    );
+    expect(tokenGuideLink.getAttribute('target')).toBe('_blank');
+    expect(tokenGuideLink.getAttribute('rel')).toBe('noopener noreferrer');
+    const topUpLink = screen.getByRole('link', {
+      name: '充值（打开 Tuzi 充值页面）',
+    });
+    expect(topUpLink.getAttribute('href')).toBe(
+      'https://api.tu-zi.com/console/topup'
+    );
+    expect(topUpLink.getAttribute('target')).toBe('_blank');
+    expect(topUpLink.getAttribute('rel')).toBe('noopener noreferrer');
     expect(
       screen.getByRole('button', { name: '换新 default 分组 Key' })
     ).not.toBeNull();
@@ -514,6 +547,52 @@ describe('TuziAccountPanel', () => {
     );
   });
 
+  it('adds another authorized group without dropping the current group', async () => {
+    const { TuziAccountPanel } = await import('./TuziAccountPanel');
+    ensureManagedProviders.mockResolvedValueOnce([
+      {
+        id: 'tuzi-managed-default',
+        group: 'default',
+        displayName: 'default',
+        apiKey: 'sk-test',
+        status: 1,
+        rotatedAt: 1700000000,
+      },
+      {
+        id: 'tuzi-managed-vip',
+        group: 'vip',
+        displayName: 'VIP',
+        apiKey: 'sk-vip',
+        status: 1,
+        rotatedAt: 1700000200,
+      },
+    ]);
+
+    render(<TuziAccountPanel />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: '获取其他分组' })
+    );
+
+    expect(await screen.findByText('选择要连接的分组')).not.toBeNull();
+    expect(getProviderGroups).toHaveBeenCalledTimes(1);
+    expect(
+      (screen.getByRole('checkbox', { name: /default/ }) as HTMLInputElement)
+        .checked
+    ).toBe(true);
+    const vipCheckbox = screen.getByRole('checkbox', {
+      name: /VIP/,
+    }) as HTMLInputElement;
+    expect(vipCheckbox.checked).toBe(false);
+
+    fireEvent.click(vipCheckbox);
+    fireEvent.click(screen.getByRole('button', { name: '应用分组并连接' }));
+
+    await waitFor(() =>
+      expect(ensureManagedProviders).toHaveBeenCalledWith(['default', 'vip'])
+    );
+  });
+
   it('shows logs in the logs view with pagination', async () => {
     const { TuziAccountPanel } = await import('./TuziAccountPanel');
 
@@ -529,11 +608,54 @@ describe('TuziAccountPanel', () => {
     expect(screen.queryByText('用户')).toBeNull();
     expect(screen.getByText('分组')).not.toBeNull();
     expect(screen.getByText('模型')).not.toBeNull();
+    expect(screen.getByText('预览')).not.toBeNull();
     expect(screen.getByText('用时')).not.toBeNull();
-    expect(screen.getByText('详情')).not.toBeNull();
+    expect(screen.queryByText('详情')).toBeNull();
     expect(screen.getByText('金额')).not.toBeNull();
     expect(screen.getByText('12 s')).not.toBeNull();
-    expect(screen.getByText('模型倍率 1')).not.toBeNull();
+    expect(screen.queryByText('模型倍率 1')).toBeNull();
+    const preview = screen.getByRole('img', {
+      name: '生成图片预览，可拖到画布',
+    });
+    expect(preview.getAttribute('src')).toBe(
+      'https://example.com/generated.png'
+    );
+    expect(preview.getAttribute('referrerpolicy')).toBe('no-referrer');
+    expect(screen.getByLabelText('共 2 张生成图片')).not.toBeNull();
+    const setData = vi.fn();
+    fireEvent.dragStart(preview, {
+      dataTransfer: { effectAllowed: 'none', setData },
+    });
+    expect(setData).toHaveBeenCalledWith(
+      'text/uri-list',
+      'https://example.com/generated.png'
+    );
+    expect(setData).toHaveBeenCalledWith(
+      'text/plain',
+      'https://example.com/generated.png'
+    );
+    fireEvent.error(preview);
+    const fallbackPreview = screen.getByRole('img', {
+      name: '生成图片预览，可拖到画布',
+    });
+    expect(fallbackPreview.getAttribute('src')).toBe(
+      'https://example.com/generated-2.png'
+    );
+    setData.mockClear();
+    fireEvent.dragStart(fallbackPreview, {
+      dataTransfer: { effectAllowed: 'none', setData },
+    });
+    expect(setData).toHaveBeenCalledWith(
+      'text/uri-list',
+      'https://example.com/generated-2.png'
+    );
+    expect(setData).toHaveBeenCalledWith(
+      'text/plain',
+      'https://example.com/generated-2.png'
+    );
+    fireEvent.error(fallbackPreview);
+    expect(screen.getByLabelText('生成图片已过期')).not.toBeNull();
+    expect(screen.getByText('图片已过期')).not.toBeNull();
     expect(screen.queryByText('OpenTu')).toBeNull();
     expect(screen.queryByText('foster0214')).toBeNull();
     expect(screen.getByText('1-10 / 12')).not.toBeNull();
@@ -542,7 +664,7 @@ describe('TuziAccountPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: '展开日志 1' }));
     expect(screen.getByRole('button', { name: '收起日志 1' })).not.toBeNull();
     expect(screen.getByText('其他详情')).not.toBeNull();
-    expect(screen.getAllByText('模型倍率 1')).toHaveLength(2);
+    expect(screen.getByText('模型倍率 1')).not.toBeNull();
     expect(screen.getByText('req-1')).not.toBeNull();
     expect(screen.getByText('Response ID')).not.toBeNull();
     expect(screen.getByText('resp-1')).not.toBeNull();
@@ -592,10 +714,32 @@ describe('TuziAccountPanel', () => {
 
     expect(await screen.findByText('选择展示字段')).not.toBeNull();
     expect(screen.getByRole('checkbox', { name: '时间' })).not.toBeNull();
+    expect(screen.getByRole('checkbox', { name: '预览' })).not.toBeNull();
     expect(screen.queryByRole('checkbox', { name: '渠道' })).toBeNull();
     expect(screen.getByRole('checkbox', { name: 'Request ID' })).not.toBeNull();
     expect(screen.getByRole('checkbox', { name: '调用状态' })).not.toBeNull();
     expect(screen.getByRole('checkbox', { name: 'IP' })).not.toBeNull();
+
+    for (const label of ['时间', '分组', '模型', '预览', '用时', '金额']) {
+      expect(
+        (screen.getByRole('checkbox', { name: label }) as HTMLInputElement)
+          .checked
+      ).toBe(true);
+    }
+    for (const label of [
+      '令牌',
+      '类型',
+      '调用状态',
+      '输入',
+      '输出',
+      'IP',
+      '详情',
+    ]) {
+      expect(
+        (screen.getByRole('checkbox', { name: label }) as HTMLInputElement)
+          .checked
+      ).toBe(false);
+    }
 
     fireEvent.click(screen.getByRole('checkbox', { name: '调用状态' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'IP' }));
@@ -621,13 +765,18 @@ describe('TuziAccountPanel', () => {
     render(<TuziAccountPanel />);
     fireEvent.click(await screen.findByRole('button', { name: '日志' }));
 
-    expect(await screen.findByText('渠道')).not.toBeNull();
-    expect(screen.getByText('用户')).not.toBeNull();
-    expect(screen.getByText('OpenTu')).not.toBeNull();
+    expect(screen.queryByText('渠道')).toBeNull();
     expect(getLogs).toHaveBeenCalledWith(1, 10, true);
 
     fireEvent.click(screen.getByRole('button', { name: '列设置' }));
-    expect(screen.getByRole('checkbox', { name: '渠道' })).not.toBeNull();
+    expect(
+      (screen.getByRole('checkbox', { name: '用户' }) as HTMLInputElement)
+        .checked
+    ).toBe(true);
+    const channelCheckbox = screen.getByRole('checkbox', { name: '渠道' });
+    expect((channelCheckbox as HTMLInputElement).checked).toBe(false);
     expect(screen.getByRole('checkbox', { name: '重试' })).not.toBeNull();
+    fireEvent.click(channelCheckbox);
+    expect((channelCheckbox as HTMLInputElement).checked).toBe(true);
   });
 });
