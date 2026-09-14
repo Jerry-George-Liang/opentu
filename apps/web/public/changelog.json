@@ -1,6 +1,20 @@
 {
   "versions": [
     {
+      "version": "1.1.11",
+      "date": "2026-09-14",
+      "changes": {
+        "features": [],
+        "fixes": [],
+        "improvements": [
+          "功能：接入 GPT Image 2.5 Sunburst 与 Flare (#259)",
+          "修复：Tuzi 图片请求恢复直连上游 (#258)"
+        ]
+      },
+      "type": "patch",
+      "highlights": "构建修复与稳定性改进"
+    },
+    {
       "version": "1.1.10",
       "date": "2026-09-11",
       "changes": {
@@ -975,19 +989,6 @@
       },
       "type": "patch",
       "highlights": "支持完整环境备份与覆盖恢复"
-    },
-    {
-      "version": "0.6.90",
-      "date": "2026-04-29",
-      "changes": {
-        "features": [],
-        "fixes": [],
-        "improvements": [
-          "更新应用版本号至0.6.89"
-        ]
-      },
-      "type": "patch",
-      "highlights": "构建修复与稳定性改进"
     }
   ]
 }

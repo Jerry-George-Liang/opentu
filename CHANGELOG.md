@@ -1,3 +1,14 @@
+## 1.1.11 (2026-09-14)
+
+### 🔧 Chores
+
+- 功能：接入 GPT Image 2.5 Sunburst 与 Flare (#259) ([d73224b3](https://github.com/ljquan/opentu/commit/d73224b3))
+- 修复：Tuzi 图片请求恢复直连上游 (#258) ([90c71157](https://github.com/ljquan/opentu/commit/90c71157))
+
+### ❤️  Thank You
+
+- selwen-0102 <2548530499@qq.com>
+
 ## 1.1.10 (2026-09-11)
 
 ### 🔧 Chores

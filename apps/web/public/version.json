@@ -1,8 +1,9 @@
 {
-  "version": "1.1.10",
-  "buildTime": "2026-09-11T17:27:11.876Z",
+  "version": "1.1.11",
+  "buildTime": "2026-09-14T08:36:47.677Z",
   "gitCommit": "unknown",
   "changelog": [
-    "修复：提高生产图片同源代理请求体上限 (#257)"
+    "功能：接入 GPT Image 2.5 Sunburst 与 Flare (#259)",
+    "修复：Tuzi 图片请求恢复直连上游 (#258)"
   ]
 }
