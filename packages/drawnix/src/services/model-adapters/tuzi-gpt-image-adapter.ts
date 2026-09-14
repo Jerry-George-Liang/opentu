@@ -74,7 +74,7 @@ export function buildTuziGPTImageRequestOptions(
   size?: string;
   image?: string[];
   response_format?: TuziResponseFormat;
-  quality?: 'auto' | 'low' | 'medium' | 'high';
+  quality?: 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
   count?: number;
   model: string;
   modelRef: ImageGenerationRequest['modelRef'];
@@ -92,7 +92,7 @@ export function buildTuziGPTImageRequestOptions(
         ? request.referenceImages
         : undefined,
     response_format: getResponseFormat(request),
-    quality: resolveOfficialGPTImageQuality(request.params),
+    quality: resolveOfficialGPTImageQuality(request.params, model),
     count: getRequestedCount(request),
     model,
     modelRef: request.modelRef || null,

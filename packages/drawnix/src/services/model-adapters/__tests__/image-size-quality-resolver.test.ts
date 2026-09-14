@@ -12,6 +12,45 @@ const GPT_IMAGE_25_MODEL_IDS = [
 ];
 
 describe('GPT Image 2.5 size and quality resolution', () => {
+  it.each(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare'])(
+    '%s 使用扩展尺寸矩阵与 1K / 2K / 4K 档位',
+    (modelId) => {
+      expect(
+        resolveOfficialGPTImageSize(modelId, '16x9', { resolution: '4k' })
+      ).toBe('3840x2160');
+      expect(
+        resolveOfficialGPTImageSize(modelId, '1x1', { resolution: '2k' })
+      ).toBe('2048x2048');
+      expect(resolveOfficialGPTImageSize(modelId, '3840x2160')).toBe(
+        '3840x2160'
+      );
+    }
+  );
+
+  it.each(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare'])(
+    '%s 支持 GPT Image 2.5 官方最高画质档位',
+    (modelId) => {
+      expect(
+        resolveOfficialGPTImageQuality({ quality: 'xhigh' }, modelId)
+      ).toBe('xhigh');
+      expect(resolveOfficialGPTImageQuality({ quality: 'max' }, modelId)).toBe(
+        'max'
+      );
+    }
+  );
+
+  it.each(['gpt-image-2', 'gpt-image-2.5', undefined])(
+    '%s 不透传新型号专用的画质档位',
+    (modelId) => {
+      expect(
+        resolveOfficialGPTImageQuality({ quality: 'xhigh' }, modelId)
+      ).toBeUndefined();
+      expect(
+        resolveOfficialGPTImageQuality({ quality: 'max' }, modelId)
+      ).toBeUndefined();
+    }
+  );
+
   it.each(GPT_IMAGE_25_MODEL_IDS)(
     '%s 仅透传官方支持的像素尺寸并省略 auto',
     (modelId) => {
