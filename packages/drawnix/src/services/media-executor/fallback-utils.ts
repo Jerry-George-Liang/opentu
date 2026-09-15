@@ -388,6 +388,30 @@ function hasVideoSignature(bytes: Uint8Array): boolean {
   );
 }
 
+async function readBlobAsArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+  if (typeof blob.arrayBuffer === 'function') {
+    return blob.arrayBuffer();
+  }
+
+  if (typeof FileReader !== 'undefined') {
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () =>
+        reject(reader.error || new Error('failed to read media blob'));
+      reader.onload = () => {
+        if (reader.result instanceof ArrayBuffer) {
+          resolve(reader.result);
+          return;
+        }
+        reject(new Error('media blob did not produce an ArrayBuffer'));
+      };
+      reader.readAsArrayBuffer(blob);
+    });
+  }
+
+  return new Response(blob).arrayBuffer();
+}
+
 /**
  * Validate only a bounded prefix so a bad HTTP 200 body cannot be persisted as media.
  * The complete Blob is already produced by the Fetch API, but no additional full-size
@@ -419,14 +443,7 @@ async function assertCacheableMediaBlob(
   if (mediaType === 'audio') return;
 
   const prefixBlob = blob.slice(0, MEDIA_SIGNATURE_BYTES);
-  let prefixBuffer: ArrayBuffer;
-  if (typeof prefixBlob.arrayBuffer === 'function') {
-    prefixBuffer = await prefixBlob.arrayBuffer();
-  } else if (typeof blob.arrayBuffer === 'function') {
-    prefixBuffer = (await blob.arrayBuffer()).slice(0, MEDIA_SIGNATURE_BYTES);
-  } else {
-    prefixBuffer = await new Response(prefixBlob).arrayBuffer();
-  }
+  const prefixBuffer = await readBlobAsArrayBuffer(prefixBlob);
   const prefix = new Uint8Array(prefixBuffer);
   const validSignature =
     mediaType === 'image'
