@@ -487,6 +487,7 @@ describe('TuziSessionApiClient', () => {
           requestId: 'req-1',
           responseId: 'resp-1',
           upstreamRequestId: 'upstream-1',
+          generatedImageUrls: ['https://example.com/image.png'],
           other: {
             request_host: 'api.example.com',
             request_path: '/v1/images/generations',
