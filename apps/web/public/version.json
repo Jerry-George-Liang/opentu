@@ -1,9 +1,10 @@
 {
-  "version": "1.1.11",
-  "buildTime": "2026-09-14T08:36:47.677Z",
+  "version": "1.1.12",
+  "buildTime": "2026-09-15T14:55:54.492Z",
   "gitCommit": "unknown",
   "changelog": [
-    "功能：接入 GPT Image 2.5 Sunburst 与 Flare (#259)",
-    "修复：Tuzi 图片请求恢复直连上游 (#258)"
+    "功能：支持 MiniMax-H3 V1/V2 专用视频接口 (#262)",
+    "功能：完善图片 Request ID 幂等恢复与安全切换 (#261)",
+    "完善 Tuzi 账户工作区与日志图片预览 (#260)"
   ]
 }

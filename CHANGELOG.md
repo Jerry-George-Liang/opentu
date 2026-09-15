@@ -1,3 +1,19 @@
+## 1.1.12 (2026-09-15)
+
+### 🚀 Features
+
+- 完善 Tuzi 账户工作区与日志图片预览 (#260) ([806216d9](https://github.com/ljquan/opentu/commit/806216d9))
+
+### 🔧 Chores
+
+- 功能：支持 MiniMax-H3 V1/V2 专用视频接口 (#262) ([b5d6b350](https://github.com/ljquan/opentu/commit/b5d6b350))
+- 功能：完善图片 Request ID 幂等恢复与安全切换 (#261) ([9c6eaa49](https://github.com/ljquan/opentu/commit/9c6eaa49))
+
+### ❤️  Thank You
+
+- Liang <13642533686@163.com>
+- selwen-0102 <2548530499@qq.com>
+
 ## 1.1.11 (2026-09-14)
 
 ### 🔧 Chores

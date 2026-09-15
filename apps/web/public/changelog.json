@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.1.12",
+      "date": "2026-09-15",
+      "changes": {
+        "features": [
+          "完善 Tuzi 账户工作区与日志图片预览 (#260)"
+        ],
+        "fixes": [],
+        "improvements": [
+          "功能：支持 MiniMax-H3 V1/V2 专用视频接口 (#262)",
+          "功能：完善图片 Request ID 幂等恢复与安全切换 (#261)"
+        ]
+      },
+      "type": "patch",
+      "highlights": "完善 Tuzi 账户工作区与日志图片预览 (#260)"
+    },
+    {
       "version": "1.1.11",
       "date": "2026-09-14",
       "changes": {
@@ -974,21 +990,6 @@
       },
       "type": "patch",
       "highlights": "在历史记录中显示创建时间并调整排序"
-    },
-    {
-      "version": "0.6.91",
-      "date": "2026-04-29",
-      "changes": {
-        "features": [
-          "支持完整环境备份与覆盖恢复"
-        ],
-        "fixes": [
-          "改进部署包关键资源检查逻辑"
-        ],
-        "improvements": []
-      },
-      "type": "patch",
-      "highlights": "支持完整环境备份与覆盖恢复"
     }
   ]
 }
