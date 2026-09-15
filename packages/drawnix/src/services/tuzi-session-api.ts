@@ -1,6 +1,7 @@
 import type { TuziEmbeddedConfig } from './tuzi-embedded-config';
 import { tuziEmbeddedConfig } from './tuzi-embedded-config';
 import { getTuziSystemToken, getTuziSystemUserId } from './tuzi-token-auth';
+import { extractTuziGeneratedImageUrls } from './tuzi-log-media';
 
 export type TuziSessionErrorCode =
   | 'TOKEN_INVALID'
@@ -53,6 +54,7 @@ export interface TuziUsageLog {
   requestId: string;
   responseId: string;
   upstreamRequestId: string;
+  generatedImageUrls?: string[];
   other: Record<string, unknown>;
 }
 
@@ -454,6 +456,7 @@ export class TuziSessionApiClient {
     return {
       items: rawItems.map((item) => {
         const log = asRecord(item) || {};
+        const other = logOtherValue(log.other);
         return {
           id: numberValue(log.id),
           createdAt: numberValue(log.created_at),
@@ -493,7 +496,11 @@ export class TuziSessionApiClient {
           upstreamRequestId:
             stringValue(log.upstream_request_id) ||
             stringValue(log.upstreamRequestId),
-          other: logOtherValue(log.other),
+          generatedImageUrls: extractTuziGeneratedImageUrls(
+            other,
+            this.baseUrl
+          ),
+          other,
         };
       }),
       total: numberValue(data?.total),

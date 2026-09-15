@@ -13,8 +13,10 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ExternalLink,
   KeyRound,
   Loader2,
+  Plus,
   RefreshCw,
   Settings2,
 } from 'lucide-react';
@@ -34,6 +36,7 @@ import { tuziEmbeddedConfig } from '../../services/tuzi-embedded-config';
 import { providerProfilesSettings } from '../../utils/settings-manager';
 import type { ProviderProfile } from '../../utils/settings-types';
 import { resetTuziSessionProviderSyncCache } from '../../services/tuzi-session-provider-sync';
+import { extractTuziGeneratedImageUrls } from '../../services/tuzi-log-media';
 import {
   clearTuziProviderGroupSelection,
   getTuziProviderGroupSelection,
@@ -62,6 +65,11 @@ const LOG_PAGE_SIZE = 10;
 const ACCOUNT_CACHE_KEY = 'opentu.tuzi.account-cache.v2';
 const LOG_CACHE_KEY = 'opentu.tuzi.logs-cache.v2';
 const CACHE_TTL_MS = 60_000;
+const TUZI_PERSONAL_SETTINGS_URL =
+  'https://api.tu-zi.com/console/personal';
+const TUZI_SYSTEM_TOKEN_GUIDE_URL =
+  'https://wiki.tu-zi.com/s/8c61a536-7a59-4410-a5e2-8dab3d041958/zh-cn/doc/opentuid-ZUZUoZjTgm';
+const TUZI_TOP_UP_URL = 'https://api.tu-zi.com/console/topup';
 type TuziAccountView = 'balance' | 'logs';
 type TuziLogColumnId =
   | 'time'
@@ -72,6 +80,7 @@ type TuziLogColumnId =
   | 'type'
   | 'callStatus'
   | 'model'
+  | 'preview'
   | 'useTime'
   | 'input'
   | 'output'
@@ -89,7 +98,7 @@ interface TuziLogColumn {
   align?: 'right';
 }
 
-const LOG_COLUMN_STORAGE_KEY = 'opentu.tuziAccount.visibleLogColumns.v2';
+const LOG_COLUMN_STORAGE_KEY = 'opentu.tuziAccount.visibleLogColumns.v3';
 const LOG_COLUMNS: TuziLogColumn[] = [
   { id: 'time', label: '时间', width: 'minmax(136px, 0.9fr)' },
   { id: 'channel', label: '渠道', width: 'minmax(64px, 0.45fr)' },
@@ -99,6 +108,7 @@ const LOG_COLUMNS: TuziLogColumn[] = [
   { id: 'type', label: '类型', width: 'minmax(64px, 0.55fr)' },
   { id: 'callStatus', label: '调用状态', width: 'minmax(92px, 0.75fr)' },
   { id: 'model', label: '模型', width: 'minmax(150px, 1.05fr)' },
+  { id: 'preview', label: '预览', width: '64px' },
   { id: 'useTime', label: '用时', width: 'minmax(72px, 0.5fr)' },
   { id: 'input', label: '输入', width: 'minmax(64px, 0.55fr)', align: 'right' },
   {
@@ -125,12 +135,11 @@ const LOG_COLUMNS: TuziLogColumn[] = [
 ];
 const DEFAULT_LOG_COLUMN_IDS: TuziLogColumnId[] = [
   'time',
-  'channel',
   'user',
   'group',
   'model',
+  'preview',
   'useTime',
-  'details',
   'amount',
 ];
 const ADMIN_LOG_COLUMN_IDS = new Set<TuziLogColumnId>([
@@ -216,6 +225,69 @@ function formatLogType(log: TuziUsageLog): string {
 
 function formatUseTime(log: TuziUsageLog): string {
   return log.useTime ? `${log.useTime} s` : '-';
+}
+
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function GeneratedImagePreview({ log }: { log: TuziUsageLog }) {
+  const [candidateIndex, setCandidateIndex] = useState(0);
+  const urls =
+    log.generatedImageUrls ||
+    extractTuziGeneratedImageUrls(
+      log.other,
+      tuziEmbeddedConfig.apiBaseUrl || ''
+    );
+  const urlsFingerprint = urls.join('\n');
+  const previewUrl = urls[candidateIndex];
+  const loadFailed = urls.length > 0 && !previewUrl;
+
+  useEffect(() => {
+    setCandidateIndex(0);
+  }, [log.id, urlsFingerprint]);
+
+  if (!previewUrl || loadFailed) {
+    return (
+      <span
+        className="tuzi-account-panel__log-preview-empty"
+        aria-label={loadFailed ? '生成图片已过期' : '无生成图片'}
+      >
+        {loadFailed ? '图片已过期' : '-'}
+      </span>
+    );
+  }
+
+  return (
+    <span className="tuzi-account-panel__log-preview">
+      <img
+        src={previewUrl}
+        alt="生成图片预览，可拖到画布"
+        title="拖到画布中使用"
+        draggable
+        loading="lazy"
+        decoding="async"
+        referrerPolicy="no-referrer"
+        onError={() => setCandidateIndex((index) => index + 1)}
+        onDragStart={(event) => {
+          event.dataTransfer.effectAllowed = 'copy';
+          event.dataTransfer.setData('text/uri-list', previewUrl);
+          event.dataTransfer.setData('text/plain', previewUrl);
+          event.dataTransfer.setData(
+            'text/html',
+            `<img src="${escapeHtmlAttribute(previewUrl)}" alt="">`
+          );
+        }}
+      />
+      {urls.length > 1 ? (
+        <span aria-label={`共 ${urls.length} 张生成图片`}>{urls.length}</span>
+      ) : null}
+    </span>
+  );
 }
 
 function logBadgeTone(value: string): number {
@@ -729,9 +801,7 @@ export function TuziAccountPanel({
             : getTuziProviderGroupSelection(selectionUserId);
           const existingSelection = resetProviderSelection
             ? []
-            : providerSelectionRequired.current
-            ? localManagedProviders().map((provider) => provider.group)
-            : [];
+            : localManagedProviders().map((provider) => provider.group);
           const allowedGroups = new Set(nextGroups.map((group) => group.group));
           setAvailableGroups(nextGroups);
           setSelectedGroups(
@@ -893,6 +963,28 @@ export function TuziAccountPanel({
     providerSelectionPending,
     providers,
     providersLoading,
+    systemToken,
+  ]);
+
+  const openProviderSelection = useCallback(() => {
+    if (
+      loading ||
+      providersLoading ||
+      modelsLoading ||
+      rotatingGroup !== null ||
+      providerSelectionPending ||
+      !systemToken
+    ) {
+      return;
+    }
+    void load(false, false, undefined, true);
+  }, [
+    load,
+    loading,
+    modelsLoading,
+    providerSelectionPending,
+    providersLoading,
+    rotatingGroup,
     systemToken,
   ]);
 
@@ -1181,17 +1273,27 @@ export function TuziAccountPanel({
                       <KeyRound size={16} aria-hidden="true" />
                       系统访问令牌
                     </h3>
-                    <p>
-                      使用系统令牌读取账户数据并同步托管 Provider。
+                    <p>使用系统令牌读取账户数据并同步托管 Provider。</p>
+                    <div className="tuzi-account-panel__token-links">
                       <a
-                        href="https://api.tu-zi.com/console/personal"
+                        href={TUZI_PERSONAL_SETTINGS_URL}
                         target="_blank"
-                        rel="noreferrer"
+                        rel="noopener noreferrer"
                         className="tuzi-account-panel__token-link"
                       >
-                        前往个人设置复制令牌
+                        <span>获取 ID 和个人令牌</span>
+                        <ExternalLink size={13} aria-hidden="true" />
                       </a>
-                    </p>
+                      <a
+                        href={TUZI_SYSTEM_TOKEN_GUIDE_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="tuzi-account-panel__token-link"
+                      >
+                        <span>查看教程</span>
+                        <ExternalLink size={13} aria-hidden="true" />
+                      </a>
+                    </div>
                   </div>
                 </div>
                 <div className="tuzi-account-panel__token-actions">
@@ -1379,13 +1481,25 @@ export function TuziAccountPanel({
                   className="tuzi-account-panel__metrics"
                   aria-label="账户余额"
                 >
-                  <div>
+                  <div className="tuzi-account-panel__metric tuzi-account-panel__metric--balance">
                     <span>可用额度</span>
-                    <strong>
-                      {displayConfigReady
-                        ? formatQuota(account?.quota || 0, displayConfig)
-                        : '加载中'}
-                    </strong>
+                    <div className="tuzi-account-panel__metric-value">
+                      <strong>
+                        {displayConfigReady
+                          ? formatQuota(account?.quota || 0, displayConfig)
+                          : '加载中'}
+                      </strong>
+                      <a
+                        className="tuzi-account-panel__top-up"
+                        href={TUZI_TOP_UP_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label="充值（打开 Tuzi 充值页面）"
+                      >
+                        <span>充值</span>
+                        <ExternalLink size={14} aria-hidden="true" />
+                      </a>
+                    </div>
                   </div>
                   <div>
                     <span>累计用量</span>
@@ -1404,7 +1518,25 @@ export function TuziAccountPanel({
                 <section className="tuzi-account-panel__section">
                   <div className="tuzi-account-panel__section-heading">
                     <h3>分组 Key</h3>
-                    <span>{providers.length}</span>
+                    <div className="tuzi-account-panel__section-actions">
+                      <button
+                        type="button"
+                        className="tuzi-account-panel__add-provider"
+                        disabled={
+                          loading ||
+                          providersLoading ||
+                          modelsLoading ||
+                          rotatingGroup !== null
+                        }
+                        onClick={openProviderSelection}
+                      >
+                        <Plus size={15} aria-hidden="true" />
+                        <span>获取其他分组</span>
+                      </button>
+                      <span aria-label={`${providers.length} 个分组 Key`}>
+                        {providers.length}
+                      </span>
+                    </div>
                   </div>
                   {providers.length ? (
                     <div className="tuzi-account-panel__providers">
@@ -1668,6 +1800,14 @@ export function TuziAccountPanel({
                                     <Activity size={14} aria-hidden="true" />
                                     <strong>{model}</strong>
                                   </span>
+                                );
+                              }
+                              if (column.id === 'preview') {
+                                return (
+                                  <GeneratedImagePreview
+                                    key={column.id}
+                                    log={log}
+                                  />
                                 );
                               }
                               if (column.id === 'useTime') {
