@@ -5,7 +5,7 @@
  * 无 sourceProfileId 的内置模型归入 "default" 默认供应商
  */
 
-import type { ModelConfig, ModelVendor } from '../constants/model-config';
+import { ModelVendor, type ModelConfig } from '../constants/model-config';
 import {
   LEGACY_DEFAULT_PROVIDER_PROFILE_ID,
   TUZI_DEFAULT_PROVIDER_NAME,
@@ -34,6 +34,21 @@ export interface ProviderGroup {
 
 /** 内置模型的默认供应商 ID */
 export const DEFAULT_PROVIDER_ID = LEGACY_DEFAULT_PROVIDER_PROFILE_ID;
+
+const VIDEO_VENDOR_ORDER: ModelVendor[] = [
+  ModelVendor.MINIMAX,
+  ModelVendor.DOUBAO,
+  ...DISCOVERY_VENDOR_ORDER.filter(
+    (vendor) => vendor !== ModelVendor.MINIMAX && vendor !== ModelVendor.DOUBAO
+  ),
+];
+
+const DEFAULT_VENDOR_PRIORITY = new Map(
+  DISCOVERY_VENDOR_ORDER.map((vendor, index) => [vendor, index])
+);
+const VIDEO_VENDOR_PRIORITY = new Map(
+  VIDEO_VENDOR_ORDER.map((vendor, index) => [vendor, index])
+);
 
 function hasRunnableProviderConfig(profile: ProviderProfile): boolean {
   const baseUrl = typeof profile.baseUrl === 'string' ? profile.baseUrl : '';
@@ -79,9 +94,6 @@ export function groupModelsByProvider(
     }
   }
 
-  // vendor 排序权重
-  const vendorPriority = new Map(DISCOVERY_VENDOR_ORDER.map((v, i) => [v, i]));
-
   const groups: ProviderGroup[] = [];
 
   for (const [pid, bucket] of buckets) {
@@ -101,6 +113,9 @@ export function groupModelsByProvider(
       }
     }
 
+    const vendorPriority = bucket.every((model) => model.type === 'video')
+      ? VIDEO_VENDOR_PRIORITY
+      : DEFAULT_VENDOR_PRIORITY;
     const vendorCategories: VendorCategory[] = Array.from(vendorMap.entries())
       .sort(
         (a, b) =>

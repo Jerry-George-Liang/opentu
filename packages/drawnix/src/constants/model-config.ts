@@ -237,6 +237,7 @@ const BUILT_IN_MODEL_RECOMMENDATION_SCORES: Readonly<Record<string, number>> = {
   kling_image: 42,
   'gemini-3-pro-image-preview-4k': 41,
 
+  'MiniMax-H3': 103,
   kling_video: 98,
   [SEEDANCE_25_MODEL_ID]: 102,
   'doubao-seedance-2-0-260128': 101,
@@ -804,6 +805,20 @@ const HAPPYHORSE_DEFAULT_PARAMS: VideoModelDefaults = {
  * 视频模型配置
  */
 const BUILT_IN_VIDEO_MODELS: ModelConfig[] = [
+  {
+    id: 'MiniMax-H3',
+    label: 'MiniMax-H3',
+    shortCode: 'mh3',
+    description: 'MiniMax-H3 视频生成模型',
+    type: 'video',
+    vendor: ModelVendor.MINIMAX,
+    tags: ['new'],
+    videoDefaults: {
+      duration: '5',
+      size: '768P',
+      aspectRatio: '16:9',
+    },
+  },
   {
     id: 'kling_video',
     label: 'Kling',

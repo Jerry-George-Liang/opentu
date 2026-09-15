@@ -322,6 +322,7 @@ describe('model-config image size options', () => {
     ]);
     expect(videoIds).toEqual(
       expect.arrayContaining([
+        'MiniMax-H3',
         'doubao-seedance-2-0-260128',
         'doubao-seedance-2-0-fast-260128',
         'doubao-seedance-2-0-mini-260615',
@@ -480,6 +481,16 @@ describe('model-config image size options', () => {
       '2K',
     ]);
     expect(videoConfig.defaultSize).toBe('768P');
+  });
+
+  it('默认视频目录内置 MiniMax-H3 并显示 NEW', () => {
+    expect(getStaticModelsByType('video')[0]).toMatchObject({
+      id: 'MiniMax-H3',
+      type: 'video',
+      vendor: ModelVendor.MINIMAX,
+      tags: ['new'],
+      recommendedScore: 103,
+    });
   });
 
   it('忽略 MiniMax-H3 模型 ID 的大小写差异', () => {
