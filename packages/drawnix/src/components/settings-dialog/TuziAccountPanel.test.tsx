@@ -634,6 +634,10 @@ describe('TuziAccountPanel', () => {
       'text/plain',
       'https://example.com/generated.png'
     );
+    expect(setData).toHaveBeenCalledWith(
+      'text/html',
+      '<img src="https://example.com/generated.png" alt="">'
+    );
     fireEvent.error(preview);
     const fallbackPreview = screen.getByRole('img', {
       name: '生成图片预览，可拖到画布',
@@ -652,6 +656,10 @@ describe('TuziAccountPanel', () => {
     expect(setData).toHaveBeenCalledWith(
       'text/plain',
       'https://example.com/generated-2.png'
+    );
+    expect(setData).toHaveBeenCalledWith(
+      'text/html',
+      '<img src="https://example.com/generated-2.png" alt="">'
     );
     fireEvent.error(fallbackPreview);
     expect(screen.getByLabelText('生成图片已过期')).not.toBeNull();

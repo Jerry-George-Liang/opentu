@@ -227,6 +227,14 @@ function formatUseTime(log: TuziUsageLog): string {
   return log.useTime ? `${log.useTime} s` : '-';
 }
 
+function escapeHtmlAttribute(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
 function GeneratedImagePreview({ log }: { log: TuziUsageLog }) {
   const [candidateIndex, setCandidateIndex] = useState(0);
   const urls =
@@ -269,6 +277,10 @@ function GeneratedImagePreview({ log }: { log: TuziUsageLog }) {
           event.dataTransfer.effectAllowed = 'copy';
           event.dataTransfer.setData('text/uri-list', previewUrl);
           event.dataTransfer.setData('text/plain', previewUrl);
+          event.dataTransfer.setData(
+            'text/html',
+            `<img src="${escapeHtmlAttribute(previewUrl)}" alt="">`
+          );
         }}
       />
       {urls.length > 1 ? (

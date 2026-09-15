@@ -439,18 +439,18 @@
       border-left: 1px solid var(--tuzi-panel-border);
     }
 
-    > span,
-    > strong {
+    > div > span,
+    > div > strong {
       display: block;
     }
 
-    > span {
+    > div > span {
       color: var(--tuzi-panel-muted);
       font-size: 12px;
       font-weight: 600;
     }
 
-    > strong,
+    > div > strong,
     .tuzi-account-panel__metric-value > strong {
       margin-top: 6px;
       overflow: hidden;
