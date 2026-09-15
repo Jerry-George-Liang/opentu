@@ -1916,6 +1916,8 @@ const SEEDANCE_25_RATIO_OPTIONS = [
   { value: 'adaptive', label: 'Auto' },
 ];
 
+const MINIMAX_H3_MODEL_IDS = ['MiniMax-H3'];
+
 /** HappyHorse 视频模型 ID */
 const HAPPYHORSE_MODEL_IDS = [
   'happyhorse-1.0-i2v',
@@ -2179,6 +2181,67 @@ export const VIDEO_PARAMS: ParamConfig[] = [
     ],
     defaultValue: 'true',
     compatibleModels: SEEDANCE_2_MODEL_IDS,
+    modelType: 'video',
+  },
+  {
+    id: 'duration',
+    label: '视频时长',
+    shortLabel: '时长',
+    description: 'MiniMax-H3 视频时长（4-15 秒）',
+    valueType: 'enum',
+    options: Array.from({ length: 12 }, (_, index) => {
+      const value = String(index + 4);
+      return { value, label: `${value}秒` };
+    }),
+    defaultValue: '5',
+    compatibleModels: MINIMAX_H3_MODEL_IDS,
+    modelType: 'video',
+  },
+  {
+    id: 'size',
+    label: '视频分辨率',
+    shortLabel: '分辨率',
+    description: 'MiniMax-H3 视频分辨率',
+    valueType: 'enum',
+    options: [
+      { value: '768P', label: '768P' },
+      { value: '2K', label: '2K' },
+    ],
+    defaultValue: '768P',
+    compatibleModels: MINIMAX_H3_MODEL_IDS,
+    modelType: 'video',
+  },
+  {
+    id: 'ratio',
+    label: '视频比例',
+    shortLabel: '比例',
+    description: 'MiniMax-H3 输出宽高比',
+    valueType: 'enum',
+    options: [
+      { value: '21:9', label: '21:9 超宽' },
+      { value: '16:9', label: '16:9 横屏' },
+      { value: '4:3', label: '4:3 横屏' },
+      { value: '1:1', label: '1:1 方形' },
+      { value: '3:4', label: '3:4 竖屏' },
+      { value: '9:16', label: '9:16 竖屏' },
+      { value: 'adaptive', label: '自适应' },
+    ],
+    defaultValue: '16:9',
+    compatibleModels: MINIMAX_H3_MODEL_IDS,
+    modelType: 'video',
+  },
+  {
+    id: 'api_version',
+    label: '接口版本',
+    shortLabel: '接口',
+    description: 'MiniMax-H3 视频生成接口版本',
+    valueType: 'enum',
+    options: [
+      { value: 'v2', label: 'V2' },
+      { value: 'v1', label: 'V1' },
+    ],
+    defaultValue: 'v1',
+    compatibleModels: MINIMAX_H3_MODEL_IDS,
     modelType: 'video',
   },
   {
@@ -3043,8 +3106,16 @@ export function getParamsByModelType(modelType: ModelType): ParamConfig[] {
  * 根据模型 ID 获取兼容的参数列表
  */
 export function getCompatibleParams(modelId: string): ParamConfig[] {
-  const modelConfig = getModelConfig(modelId);
+  const requestedModelId = modelId.trim().toLowerCase();
+  const modelConfig =
+    getModelConfig(modelId) ||
+    (requestedModelId === 'minimax-h3'
+      ? runtimeModels.find(
+          (model) => model.id.toLowerCase() === requestedModelId
+        )
+      : undefined);
   if (!modelConfig) return [];
+  const normalizedModelId = modelConfig.id.toLowerCase();
 
   // 构建模型标签集合：显式标签 + 类型 + 厂商 + 基于 ID 的启发式
   const modelTags = new Set<string>();
@@ -3078,7 +3149,10 @@ export function getCompatibleParams(modelId: string): ParamConfig[] {
       : false;
     // 检查是否在兼容 ID 列表（无标签限制时，空数组表示所有模型都兼容）
     const idMatched =
-      param.compatibleModels.includes(modelId) ||
+      param.compatibleModels.some(
+        (compatibleModel) =>
+          compatibleModel.toLowerCase() === normalizedModelId
+      ) ||
       (param.compatibleModels.length === 0 && !param.compatibleTags?.length);
     return idMatched || tagMatched;
   });

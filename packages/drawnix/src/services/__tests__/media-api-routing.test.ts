@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   generateImageAsync,
   generateImageSync,
+  queryVideoStatus,
   resumeAsyncImagePolling,
   submitVideoGeneration,
 } from '../media-api';
@@ -220,6 +221,179 @@ describe('media-api provider routing', () => {
     );
 
     expect(remoteId).toBe('video-task-1');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('submits MiniMax-H3 through its official v2 JSON endpoint', async () => {
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        expect(String(input)).toBe(
+          'https://video.example.com/v2/video_generation'
+        );
+        expect(init?.headers).toMatchObject({
+          Authorization: 'Bearer video-secret',
+          'Content-Type': 'application/json',
+        });
+        expect(JSON.parse(String(init?.body))).toEqual({
+          model: 'MiniMax-H3',
+          content: [{ type: 'text', text: 'make a video' }],
+          duration: 5,
+          resolution: '2K',
+          ratio: '16:9',
+        });
+
+        return new Response(JSON.stringify({ task_id: 'minimax-task-1' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    );
+
+    const remoteId = await submitVideoGeneration(
+      {
+        prompt: 'make a video',
+        model: 'MiniMax-H3',
+        duration: '5',
+        size: '2k',
+        params: { ratio: '16:9', api_version: 'v2' },
+      },
+      {
+        apiKey: 'video-secret',
+        baseUrl: 'https://video.example.com/v1',
+        authType: 'bearer',
+        fetchImpl,
+      }
+    );
+
+    expect(remoteId).toBe('minimax-task-1');
+  });
+
+  it('submits MiniMax-H3 through the default v1 JSON endpoint', async () => {
+    const fetchImpl = vi.fn(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        expect(String(input)).toBe('https://video.example.com/v1/videos');
+        expect(init?.headers).toMatchObject({
+          Authorization: 'Bearer video-secret',
+          'Content-Type': 'application/json',
+        });
+        expect(JSON.parse(String(init?.body))).toEqual({
+          model: 'MiniMax-H3',
+          content: [{ type: 'text', text: 'make a v1 video' }],
+          duration: 5,
+          resolution: '2K',
+          ratio: '16:9',
+        });
+
+        return new Response(
+          JSON.stringify({
+            id: 'minimax-v1-task-1',
+            model: 'MiniMax-H3',
+            status: 'queued',
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        );
+      }
+    );
+
+    const remoteId = await submitVideoGeneration(
+      {
+        prompt: 'make a v1 video',
+        model: 'MiniMax-H3',
+        duration: '5',
+        size: '2K',
+        params: { ratio: '16:9' },
+      },
+      {
+        apiKey: 'video-secret',
+        baseUrl: 'https://video.example.com/v1',
+        authType: 'bearer',
+        fetchImpl,
+      }
+    );
+
+    expect(remoteId).toBe('minimax-v1-task-1');
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls MiniMax-H3 through its official v2 endpoint', async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe(
+        'https://video.example.com/v2/query/video_generation/minimax-task-1'
+      );
+
+      return new Response(
+        JSON.stringify({
+          task: {
+            id: 'minimax-task-1',
+            model: 'MiniMax-H3',
+            status: 'running',
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    });
+
+    const status = await queryVideoStatus(
+      'minimax-task-1',
+      {
+        apiKey: 'video-secret',
+        baseUrl: 'https://video.example.com/v1',
+        defaultModel: 'MiniMax-H3',
+        params: { api_version: 'v2' },
+        authType: 'bearer',
+        fetchImpl,
+      }
+    );
+
+    expect(status).toMatchObject({
+      id: 'minimax-task-1',
+      model: 'MiniMax-H3',
+      status: 'in_progress',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('polls MiniMax-H3 through the default v1 endpoint', async () => {
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => {
+      expect(String(input)).toBe(
+        'https://video.example.com/v1/videos/minimax-v1-task-1'
+      );
+
+      return new Response(
+        JSON.stringify({
+          id: 'minimax-v1-task-1',
+          model: 'MiniMax-H3',
+          status: 'in_progress',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+    });
+
+    const status = await queryVideoStatus(
+      'minimax-v1-task-1',
+      {
+        apiKey: 'video-secret',
+        baseUrl: 'https://video.example.com/v1',
+        defaultModel: 'MiniMax-H3',
+        authType: 'bearer',
+        fetchImpl,
+      }
+    );
+
+    expect(status).toMatchObject({
+      id: 'minimax-v1-task-1',
+      model: 'MiniMax-H3',
+      status: 'in_progress',
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 

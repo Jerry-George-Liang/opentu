@@ -25,7 +25,9 @@ import type { CacheWarning } from '../../types/cache-warning.types';
 import {
   downloadVideoContentToLocalUrl,
   extractInlineVideoUrl,
-  resolveVideoPollPath,
+  isMiniMaxH3Model,
+  normalizeMiniMaxH3VideoResponse,
+  resolveVideoPollPathForModel,
   shouldDownloadVideoContent,
 } from '../video-binding-utils';
 
@@ -136,6 +138,7 @@ export async function pollVideoStatus(
   const interval = 5000; // 5 秒轮询间隔
   const maxConsecutiveErrors = 3; // 连续 HTTP 错误超过此数才放弃
   let consecutiveErrors = 0;
+  const isMiniMaxH3 = isMiniMaxH3Model(config.model);
   const assertPollingActive = () => {
     signal?.throwIfAborted();
     if (!isCurrentAttempt()) {
@@ -149,8 +152,9 @@ export async function pollVideoStatus(
     assertPollingActive();
     let data: any;
     try {
-      const statusPath = resolveVideoPollPath(
+      const statusPath = resolveVideoPollPathForModel(
         videoId,
+        config.model,
         config.binding,
         config.params
       );
@@ -166,7 +170,9 @@ export async function pollVideoStatus(
         },
         {
           path: statusPath,
-          baseUrlStrategy: config.binding?.baseUrlStrategy,
+          baseUrlStrategy: isMiniMaxH3
+            ? 'trim-v1'
+            : config.binding?.baseUrlStrategy,
           method: 'GET',
           signal,
         }
@@ -188,7 +194,10 @@ export async function pollVideoStatus(
         continue;
       }
 
-      data = await response.json();
+      const rawData = await response.json();
+      data = isMiniMaxH3
+        ? normalizeMiniMaxH3VideoResponse(rawData, videoId)
+        : rawData;
       assertPollingActive();
     } catch (error: any) {
       // 网络错误（fetch 本身失败）也计入连续错误

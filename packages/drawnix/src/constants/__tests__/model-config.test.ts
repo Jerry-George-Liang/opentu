@@ -8,6 +8,7 @@ import {
   ModelVendor,
   setRuntimeModelConfigs,
 } from '../model-config';
+import { getVideoModelConfig } from '../video-model-config';
 
 describe('model-config image size options', () => {
   afterEach(() => {
@@ -405,6 +406,98 @@ describe('model-config image size options', () => {
     expect(options('size')).toBeUndefined();
     expect(params.map((param) => param.id)).not.toEqual(
       expect.arrayContaining(['seed', 'camera_fixed'])
+    );
+  });
+
+  it('为运行时 MiniMax-H3 暴露官方视频参数', () => {
+    setRuntimeModelConfigs([
+      {
+        id: 'MiniMax-H3',
+        label: 'MiniMax-H3',
+        type: 'video',
+        vendor: ModelVendor.MINIMAX,
+      },
+    ]);
+
+    const params = getCompatibleParams('MiniMax-H3');
+    const param = (id: string) => params.find((item) => item.id === id);
+
+    expect(param('duration')?.options?.map((option) => option.value)).toEqual([
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      '10',
+      '11',
+      '12',
+      '13',
+      '14',
+      '15',
+    ]);
+    expect(param('duration')?.defaultValue).toBe('5');
+    expect(param('size')?.options?.map((option) => option.value)).toEqual([
+      '768P',
+      '2K',
+    ]);
+    expect(param('size')?.defaultValue).toBe('768P');
+    expect(param('ratio')?.options?.map((option) => option.value)).toEqual([
+      '21:9',
+      '16:9',
+      '4:3',
+      '1:1',
+      '3:4',
+      '9:16',
+      'adaptive',
+    ]);
+    expect(param('ratio')?.defaultValue).toBe('16:9');
+    expect(param('api_version')?.options).toEqual([
+      { value: 'v2', label: 'V2' },
+      { value: 'v1', label: 'V1' },
+    ]);
+    expect(param('api_version')?.defaultValue).toBe('v1');
+    expect(params.some((item) => item.id === 'generate_audio')).toBe(false);
+
+    const videoConfig = getVideoModelConfig('MiniMax-H3');
+    expect(videoConfig.durationOptions.map((option) => option.value)).toEqual([
+      '4',
+      '5',
+      '6',
+      '7',
+      '8',
+      '9',
+      '10',
+      '11',
+      '12',
+      '13',
+      '14',
+      '15',
+    ]);
+    expect(videoConfig.defaultDuration).toBe('5');
+    expect(videoConfig.sizeOptions.map((option) => option.value)).toEqual([
+      '768P',
+      '2K',
+    ]);
+    expect(videoConfig.defaultSize).toBe('768P');
+  });
+
+  it('忽略 MiniMax-H3 模型 ID 的大小写差异', () => {
+    setRuntimeModelConfigs([
+      {
+        id: 'MiniMax-H3',
+        label: 'MiniMax-H3',
+        type: 'video',
+        vendor: ModelVendor.MINIMAX,
+      },
+    ]);
+
+    const paramIds = getCompatibleParams('minimax-h3').map(
+      (param) => param.id
+    );
+
+    expect(paramIds).toEqual(
+      expect.arrayContaining(['duration', 'size', 'ratio', 'api_version'])
     );
   });
 });
