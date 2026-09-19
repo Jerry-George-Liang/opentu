@@ -92,6 +92,36 @@ describe('model-grouping', () => {
     ).toEqual(['omni-flash-components', 'omni-flash']);
   });
 
+  it('视频模型优先展示 MiniMax，其次展示豆包', () => {
+    const groups = groupModelsByProvider(
+      [
+        {
+          id: 'omni-flash',
+          label: 'Gemini Omni Flash',
+          type: 'video',
+          vendor: ModelVendor.GEMINI,
+        },
+        {
+          id: 'doubao-seedance-2-0-260128',
+          label: 'Seedance 2.0',
+          type: 'video',
+          vendor: ModelVendor.DOUBAO,
+        },
+        {
+          id: 'MiniMax-H3',
+          label: 'MiniMax-H3',
+          type: 'video',
+          vendor: ModelVendor.MINIMAX,
+        },
+      ],
+      []
+    );
+
+    expect(
+      groups[0]?.vendorCategories.map((category) => category.vendor)
+    ).toEqual([ModelVendor.MINIMAX, ModelVendor.DOUBAO, ModelVendor.GEMINI]);
+  });
+
   it('已启用且配置完整但还没有模型的供应商也会显示出来', () => {
     const groups = groupModelsByProvider(
       [],

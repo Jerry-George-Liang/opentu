@@ -170,6 +170,101 @@ describe('pollVideoStatus', () => {
       vi.useRealTimers();
     }
   });
+
+  it('uses the MiniMax-H3 v2 polling path with a v1 provider base URL', async () => {
+    providerSend.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          task: {
+            id: 'minimax-task-1',
+            model: 'MiniMax-H3',
+            status: 'succeeded',
+            content: { url: 'https://cdn.example.com/minimax.mp4' },
+          },
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    );
+    const { pollVideoStatus } = await import('./fallback-utils');
+
+    const result = await pollVideoStatus(
+      'minimax-task-1',
+      {
+        apiKey: 'test-key',
+        baseUrl: 'https://video.example.com/v1',
+        model: 'MiniMax-H3',
+        params: { api_version: 'v2' },
+        provider: {
+          profileId: 'runtime',
+          profileName: 'Runtime',
+          providerType: 'openai-compatible',
+          baseUrl: 'https://video.example.com/v1',
+          apiKey: 'test-key',
+          authType: 'bearer',
+        },
+      },
+      vi.fn()
+    );
+
+    expect(providerSend).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://video.example.com/v1' }),
+      expect.objectContaining({
+        path: '/v2/query/video_generation/minimax-task-1',
+        baseUrlStrategy: 'trim-v1',
+        method: 'GET',
+      })
+    );
+    expect(result).toEqual({ url: 'https://cdn.example.com/minimax.mp4' });
+  });
+
+  it('uses the default MiniMax-H3 v1 polling path', async () => {
+    providerSend.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          id: 'minimax-v1-task-1',
+          model: 'MiniMax-H3',
+          status: 'completed',
+          video_url: 'https://cdn.example.com/minimax-v1.mp4',
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    );
+    const { pollVideoStatus } = await import('./fallback-utils');
+
+    const result = await pollVideoStatus(
+      'minimax-v1-task-1',
+      {
+        apiKey: 'test-key',
+        baseUrl: 'https://video.example.com/v1',
+        model: 'MiniMax-H3',
+        provider: {
+          profileId: 'runtime',
+          profileName: 'Runtime',
+          providerType: 'openai-compatible',
+          baseUrl: 'https://video.example.com/v1',
+          apiKey: 'test-key',
+          authType: 'bearer',
+        },
+      },
+      vi.fn()
+    );
+
+    expect(providerSend).toHaveBeenCalledWith(
+      expect.objectContaining({ baseUrl: 'https://video.example.com/v1' }),
+      expect.objectContaining({
+        path: '/v1/videos/minimax-v1-task-1',
+        baseUrlStrategy: 'trim-v1',
+        method: 'GET',
+      })
+    );
+    expect(result).toEqual({ url: 'https://cdn.example.com/minimax-v1.mp4' });
+  });
 });
 
 describe('cacheRemoteUrl', () => {
