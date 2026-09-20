@@ -716,7 +716,11 @@ describe('runtime-model-discovery', () => {
         throw new TypeError('Failed to fetch');
       }
 
-      if (url === 'https://api.tu-zi.com/v1/models') {
+      if (
+        url === 'https://api.tu-zi.com/v1/models' ||
+        url ===
+          'http://localhost:3000/__opentu_tuzi_session__/v1/models'
+      ) {
         return {
           ok: true,
           text: async () =>
