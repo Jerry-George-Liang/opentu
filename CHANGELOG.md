@@ -1,3 +1,17 @@
+## 1.1.15 (2026-09-22)
+
+### 🚀 Features
+
+- 支持 MiniMax-H3 视频输入 (#273) ([7463586a](https://github.com/ljquan/opentu/commit/7463586a))
+
+### 🩹 Fixes
+
+- 修复等待执行循环 (#272) ([78a2848b](https://github.com/ljquan/opentu/commit/78a2848b))
+
+### ❤️  Thank You
+
+- Liang <13642533686@163.com>
+
 ## 1.1.14 (2026-09-22)
 
 ### 🚀 Features
