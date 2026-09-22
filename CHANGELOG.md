@@ -1,3 +1,24 @@
+## 1.1.14 (2026-09-22)
+
+### 🚀 Features
+
+- add Tuzi postMessage onboarding ([c1f38717](https://github.com/ljquan/opentu/commit/c1f38717))
+
+### 🩹 Fixes
+
+- seedance2.0/2.5 的参数修复 ([8dfb2f7f](https://github.com/ljquan/opentu/commit/8dfb2f7f))
+- 为批量图片下载增加加载状态 ([d1b4f112](https://github.com/ljquan/opentu/commit/d1b4f112))
+- correct Image 2 and 2.5 sizes ([b150c4a9](https://github.com/ljquan/opentu/commit/b150c4a9))
+
+### 🔧 Chores
+
+- 修复：模型列表及数量获取问题修复 ([4c04d974](https://github.com/ljquan/opentu/commit/4c04d974))
+
+### ❤️  Thank You
+
+- 李泓震 <3029956183@qq.com>
+- Liang <13642533686@163.com>
+
 ## 1.1.13 (2026-09-20)
 
 ### 🚀 Features
