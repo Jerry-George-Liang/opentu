@@ -134,8 +134,9 @@ describe('MiniMax-H3 video workflow', () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
-        new Response(new Blob(['video'], { type: 'video/mp4' }), {
+        new Response('video', {
           status: 200,
+          headers: { 'Content-Type': 'video/mp4' },
         })
       )
     );
@@ -166,8 +167,9 @@ describe('MiniMax-H3 video workflow', () => {
   it('uses the provider credential for a result URL on the provider origin', async () => {
     stubFileReader();
     const send = vi.spyOn(providerTransport, 'send').mockResolvedValue(
-      new Response(new Blob(['video'], { type: 'video/mp4' }), {
+      new Response('video', {
         status: 200,
+        headers: { 'Content-Type': 'video/mp4' },
       })
     );
 
