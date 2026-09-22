@@ -38,6 +38,8 @@ describe('model-config image size options', () => {
     ).toEqual(expected);
 
     for (const modelId of [
+      'gpt-image-2.5',
+      'gpt-image-2.5-vip',
       'gpt-image-2.5-sunburst',
       'gpt-image-2.5-flare',
     ]) {
@@ -85,8 +87,8 @@ describe('model-config image size options', () => {
     ]);
   });
 
-  it.each(['gpt-image-2.5-sunburst', 'gpt-image-2.5-flare'])(
-    '为 %s 暴露 1K / 2K / 4K 与完整官方画质',
+  it.each(['gpt-image-2.5', 'gpt-image-2.5-sunburst', 'gpt-image-2.5-flare'])(
+    '为 %s 暴露分辨率与最高到 xhigh 的画质选项',
     (modelId) => {
       const params = getCompatibleParams(modelId);
 
@@ -94,16 +96,36 @@ describe('model-config image size options', () => {
         params
           .find((param) => param.id === 'resolution')
           ?.options?.map((option) => option.value)
-      ).toEqual(['1k', '2k', '4k']);
+      ).toEqual(['auto', '1k', '2k', '4k']);
+      expect(params.find((param) => param.id === 'resolution')?.options).toEqual([
+        { value: 'auto', label: '自动' },
+        { value: '1k', label: '1K' },
+        { value: '2k', label: '2K' },
+        { value: '4k', label: '4K' },
+      ]);
       expect(
         params
           .find((param) => param.id === 'quality')
           ?.options?.map((option) => option.value)
-      ).toEqual(['auto', 'low', 'medium', 'high', 'xhigh', 'max']);
+      ).toEqual(['auto', 'low', 'medium', 'high', 'xhigh']);
     }
   );
 
-  it.each(['gpt-image-2.5-1k', 'gpt-image-2.5', 'gpt-image-2.5-vip'])(
+  it('为 GPT Image 2.5 VIP 提供分辨率与超高清画质档位', () => {
+    const params = getCompatibleParams('gpt-image-2.5-vip');
+    expect(
+      params.find((param) => param.id === 'resolution')?.options?.map(
+        (option) => option.value
+      )
+    ).toEqual(['auto', '1k', '2k', '4k']);
+    expect(
+      params.find((param) => param.id === 'quality')?.options?.map(
+        (option) => option.value
+      )
+    ).toEqual(['auto', 'low', 'medium', 'high', 'xhigh']);
+  });
+
+  it.each(['gpt-image-2.5-1k'])(
     '将 %s 注册为仅支持官方像素尺寸的 GPT 图片模型',
     (modelId) => {
       const model = getStaticModelConfig(modelId);
@@ -348,6 +370,7 @@ describe('model-config image size options', () => {
     'doubao-seedance-2-0-mini-260615',
   ])('Seedance 2.0 参数与官方 JSON 契约一致：%s', (modelId) => {
     const params = getCompatibleParams(modelId);
+    expect(params.map((param) => param.id)).not.toContain('watermark');
     const options = (paramId: string) =>
       params
         .find((param) => param.id === paramId)
@@ -375,17 +398,13 @@ describe('model-config image size options', () => {
       'adaptive',
     ]);
     expect(params.map((param) => param.id)).toEqual(
-      expect.arrayContaining([
-        'generate_audio',
-        'watermark',
-        'seed',
-        'camera_fixed',
-      ])
+      expect.arrayContaining(['generate_audio', 'seed', 'camera_fixed'])
     );
   });
 
   it('Seedance 2.5 exposes its own duration and ratio boundaries', () => {
     const params = getCompatibleParams('doubao-seedance-2-5-260628');
+    expect(params.map((param) => param.id)).not.toContain('watermark');
     const options = (paramId: string) =>
       params
         .find((param) => param.id === paramId)

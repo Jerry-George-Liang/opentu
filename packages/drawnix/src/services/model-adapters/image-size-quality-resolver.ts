@@ -1,4 +1,5 @@
 import {
+  GPT_IMAGE_25_EXTENDED_MODEL_IDS,
   GPT_IMAGE_25_MODEL_IDS,
   GPT_IMAGE_2_MODEL_IDS,
 } from '../../constants/model-config';
@@ -29,6 +30,8 @@ type LegacyGPTImageAspectRatioKey = '1x1' | '2x3' | '3x2';
 const GPT_IMAGE_2_MODEL_ID_SET = new Set(GPT_IMAGE_2_MODEL_IDS);
 const GPT_IMAGE_25_MODEL_ID_SET = new Set(GPT_IMAGE_25_MODEL_IDS);
 const EXTENDED_GPT_IMAGE_QUALITY_MODEL_IDS = new Set([
+  'gpt-image-2.5',
+  'gpt-image-2.5-vip',
   'gpt-image-2.5-sunburst',
   'gpt-image-2.5-flare',
 ]);
@@ -89,6 +92,20 @@ const GPT_IMAGE_2_SIZE_MATRIX: Record<
     '16x9': '3840x2160',
     '21x9': '3840x1632',
   },
+};
+
+// Keep Image 2 and 2.5 2K requests within the provider's pixel billing cap.
+const GPT_IMAGE_2K_BILLING_SIZES: Record<GPTImageAspectRatioKey, string> = {
+  '1x1': '1920x1920',
+  '2x3': '1536x2304',
+  '3x2': '2304x1536',
+  '3x4': '1632x2176',
+  '4x3': '2176x1632',
+  '4x5': '1664x2080',
+  '5x4': '2080x1664',
+  '9x16': '1440x2560',
+  '16x9': '2560x1440',
+  '21x9': '2912x1248',
 };
 
 const LEGACY_GPT_IMAGE_SIZE_BY_RATIO: Record<
@@ -290,12 +307,57 @@ export function resolveOfficialGPTImageQuality(
     : undefined;
 }
 
+export function normalizeGPTImage25ResolutionParams(
+  modelId: string,
+  params: Record<string, string>
+): Record<string, string> {
+  if (
+    !GPT_IMAGE_25_EXTENDED_MODEL_IDS.includes(modelId.trim().toLowerCase()) ||
+    !normalizeImageResolutionTier(params.resolution) ||
+    params.size?.trim().toLowerCase() === 'auto'
+  ) {
+    return params;
+  }
+  return {
+    ...params,
+    size: resolveKnownAspectRatio(params.size) || '1x1',
+  };
+}
+
 export function resolveOfficialGPTImageSize(
   modelId: string | undefined,
   size?: string,
   params?: Record<string, unknown>
 ): string | undefined {
   const normalizedSize = size?.trim().toLowerCase().replace(':', 'x');
+  const useExtendedSizing =
+    typeof modelId === 'string' &&
+    GPT_IMAGE_25_EXTENDED_MODEL_IDS.includes(modelId.trim().toLowerCase());
+  // Business 1K retains the former automatic tier independently of UI auto.
+  const resolution = useExtendedSizing &&
+    (params?.resolution === 'auto' || params?.resolution === 'billing-1k')
+    ? undefined
+    : resolveImageResolutionTier(params);
+
+  // Explicit automatic aspect ratio remains independent of the selected tier.
+  if (normalizedSize === 'auto') {
+    return undefined;
+  }
+
+  // For concrete ratios or stale pixel sizes, apply the selected K tier.
+  if (useExtendedSizing && resolution) {
+    const aspectRatio =
+      !normalizedSize
+        ? '1x1'
+        : resolveKnownAspectRatio(normalizedSize);
+    if (aspectRatio) {
+      if (resolution === '2k') {
+        return GPT_IMAGE_2K_BILLING_SIZES[aspectRatio];
+      }
+      return GPT_IMAGE_2_SIZE_MATRIX[resolution][aspectRatio];
+    }
+  }
+
   if (!normalizedSize || normalizedSize === 'auto') {
     return undefined;
   }
@@ -329,8 +391,11 @@ export function resolveOfficialGPTImageSize(
     return LEGACY_GPT_IMAGE_SIZE_BY_RATIO[toLegacyAspectRatio(aspectRatio)];
   }
 
-  const resolution = resolveImageResolutionTier(params) || '1k';
-  return GPT_IMAGE_2_SIZE_MATRIX[resolution][aspectRatio];
+  if (!useExtendedSizing && isGPTImage2Model(modelId) && resolution === '2k') {
+    return GPT_IMAGE_2K_BILLING_SIZES[aspectRatio];
+  }
+
+  return GPT_IMAGE_2_SIZE_MATRIX[resolution || '1k'][aspectRatio];
 }
 
 export function resolveOfficialGPTImageEditSize(

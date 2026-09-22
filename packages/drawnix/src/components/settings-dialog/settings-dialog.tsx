@@ -98,6 +98,10 @@ import { WinBoxWindow } from '../winbox';
 import { TtsSettingsPanel } from '../project-drawer/TtsSettingsPanel';
 import { TuziAccountPanel } from './TuziAccountPanel';
 import { isTuziEmbeddedMode } from '../../services/tuzi-embedded-config';
+import {
+  requestTuziParentContext,
+  TUZI_BRIDGE_EVENT,
+} from '../../services/tuzi-postmessage-bridge';
 import { syncTuziSessionProviders } from '../../services/tuzi-session-provider-sync';
 import { hasTuziSystemToken } from '../../services/tuzi-token-auth';
 import { openModelBenchmarkTool } from '../../services/model-benchmark-launcher';
@@ -113,6 +117,10 @@ import {
   normalizeEndpointUrl,
   resolveEndpointSelectionUrl,
 } from './provider-endpoint-utils';
+import {
+  getCredentialChangedProfiles,
+  refreshChangedProviderModels,
+} from './provider-model-refresh';
 import { MessagePlugin } from '../../utils/message-plugin';
 import {
   isTrustedTuziApiBaseUrl,
@@ -1136,17 +1144,25 @@ export const SettingsDialog = ({
   } = useDeviceType();
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const [dialogWidth, setDialogWidth] = useState(0);
-  const settingsSections = useMemo(
-    () =>
-      isTuziEmbeddedMode()
-        ? [TUZI_ACCOUNT_SECTION, ...VIEW_SECTIONS]
-        : VIEW_SECTIONS,
-    []
-  );
+  const [tuziMode, setTuziMode] = useState(() => isTuziEmbeddedMode());
+  useEffect(() => {
+    const syncBridgeMode = () => setTuziMode(isTuziEmbeddedMode());
+    window.addEventListener(TUZI_BRIDGE_EVENT, syncBridgeMode);
+
+    if (appState.openSettings) {
+      void requestTuziParentContext({ refresh: true }).finally(syncBridgeMode);
+    }
+
+    return () => window.removeEventListener(TUZI_BRIDGE_EVENT, syncBridgeMode);
+  }, [appState.openSettings]);
+  const settingsSections = tuziMode
+    ? [TUZI_ACCOUNT_SECTION, ...VIEW_SECTIONS]
+    : VIEW_SECTIONS;
 
   const [activeView, setActiveView] = useState<SettingsView>(() =>
-    isTuziEmbeddedMode() ? 'tuzi-account' : 'providers'
+    tuziMode ? 'tuzi-account' : 'providers'
   );
+  const [tuziGroupPickerRequest, setTuziGroupPickerRequest] = useState(0);
   const [selectedProfileId, setSelectedProfileId] = useState(
     LEGACY_DEFAULT_PROVIDER_PROFILE_ID
   );
@@ -1257,7 +1273,7 @@ export const SettingsDialog = ({
   );
 
   const enabledProfiles = profilesDraft.filter((profile) => profile.enabled);
-  const showTuziProviders = !isTuziEmbeddedMode() || hasTuziSystemToken();
+  const showTuziProviders = !tuziMode || hasTuziSystemToken();
   const isCompactLayout =
     isMobileDevice || viewportWidth <= SETTINGS_DIALOG_COMPACT_BREAKPOINT;
 
@@ -1360,7 +1376,7 @@ export const SettingsDialog = ({
     });
     setActiveView(nextView);
 
-    if (nextView === 'providers' && isTuziEmbeddedMode()) {
+    if (nextView === 'providers' && tuziMode) {
       const safeProfiles = cloneValue(providerProfilesSettings.get());
       setProfilesDraft(safeProfiles);
       setSelectedProfileId((currentProfileId) =>
@@ -1536,7 +1552,9 @@ export const SettingsDialog = ({
     }
     setShowWorkZoneCard(nextShowWorkZoneCard);
 
-    const nextActiveView: SettingsView = 'providers';
+    const nextActiveView: SettingsView = tuziMode
+      ? 'tuzi-account'
+      : 'providers';
     setActiveView(nextActiveView);
     setCompactProviderMode(
       pendingProviderIntent && isCompactLayout ? 'detail' : 'catalog'
@@ -1560,7 +1578,7 @@ export const SettingsDialog = ({
     if (pendingProviderIntent?.action === 'create') {
       applyProviderNavigationIntent(pendingProviderIntent, nextProfiles);
     }
-  }, [appState.openSettings]);
+  }, [appState.openSettings, tuziMode]);
 
   useEffect(() => {
     if (!selectedProfileId && profilesDraft[0]) {
@@ -1955,6 +1973,12 @@ export const SettingsDialog = ({
   ) => {
     const sourceProfiles = baseProfiles || profilesDraft;
 
+    if (intent.action === 'tuzi-groups') {
+      setActiveView('tuzi-account');
+      setTuziGroupPickerRequest((current) => current + 1);
+      return sourceProfiles;
+    }
+
     setActiveView('providers');
     if (isCompactLayout) {
       setCompactProviderMode('detail');
@@ -2250,7 +2274,7 @@ export const SettingsDialog = ({
     }
 
     if (hasPendingChanges) {
-      const saved = await persistDrafts(false);
+      const saved = await persistDrafts(false, false);
       if (!saved) {
         return;
       }
@@ -2677,7 +2701,10 @@ export const SettingsDialog = ({
     setAppState((prev) => ({ ...prev, openSettings: false }));
   };
 
-  const persistDrafts = async (closeAfterSave = false): Promise<boolean> => {
+  const persistDrafts = async (
+    closeAfterSave = false,
+    refreshModels = true
+  ): Promise<boolean> => {
     if (isPersisting) {
       return false;
     }
@@ -2778,6 +2805,14 @@ export const SettingsDialog = ({
       const normalizedActiveTextModel =
         getRouteModelId(activePreset?.text) || normalizedTextModel;
 
+      const changedProfiles = getCredentialChangedProfiles(
+        normalizedProfiles,
+        initialProfiles
+      );
+      // Invalidate even legacy catalogs without a credential signature.
+      changedProfiles.forEach((profile) =>
+        runtimeModelDiscovery.clear(profile.id)
+      );
       normalizedProfiles.forEach((profile) => {
         runtimeModelDiscovery.invalidateIfConfigChanged(
           profile.id,
@@ -2834,6 +2869,15 @@ export const SettingsDialog = ({
           showWorkZoneCard,
         })
       );
+
+      if (refreshModels) {
+        const failures = await refreshChangedProviderModels(changedProfiles);
+        if (failures.length > 0) {
+          MessagePlugin.warning(
+            `配置已保存，以下供应商模型刷新失败：${failures.join('、')}`
+          );
+        }
+      }
 
       if (closeAfterSave) {
         closeSettingsDialog();
@@ -3140,7 +3184,10 @@ export const SettingsDialog = ({
     const selectedCounts = getModelTypeCounts(runtimeState.models);
     const draftState = getProviderDraftState(selectedProfile, initialProfiles);
     const totalModels =
-      selectedCounts.image + selectedCounts.video + selectedCounts.text;
+      selectedCounts.image +
+      selectedCounts.video +
+      selectedCounts.text +
+      selectedCounts.audio;
     const selectedProfileHomepageUrl = getProviderHomepageUrl(selectedProfile);
 
     return (
@@ -3202,7 +3249,13 @@ export const SettingsDialog = ({
                     {PROVIDER_TYPE_META[selectedProfile.providerType].label}
                   </span>
                   <span>{selectedProfile.enabled ? '启用' : '停用'}</span>
-                  <span>{totalModels} 个模型</span>
+                  <span>
+                    {runtimeState.status === 'loading'
+                      ? '模型刷新中...'
+                      : runtimeState.status === 'error'
+                      ? '模型刷新失败'
+                      : `${totalModels} 个模型`}
+                  </span>
                   <span>{draftState === 'saved' ? '已保存' : '未保存'}</span>
                 </div>
               </div>
@@ -4731,7 +4784,11 @@ export const SettingsDialog = ({
   const renderActiveView = () => {
     if (activeView === 'tuzi-account') {
       return (
-        <TuziAccountPanel onProvidersChanged={handleTuziProvidersChanged} />
+        <TuziAccountPanel
+          onProvidersChanged={handleTuziProvidersChanged}
+          onSetupCompleted={closeSettingsDialog}
+          openProviderSelectionRequest={tuziGroupPickerRequest}
+        />
       );
     }
     if (activeView === 'canvas') {
