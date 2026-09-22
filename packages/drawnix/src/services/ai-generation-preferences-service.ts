@@ -26,6 +26,7 @@ import { isSeedance2ModelId } from '../utils/seedance-model';
 import { matchFrameSizeForModel } from '../utils/frame-size-matcher';
 import { sizeToAspectRatio } from './media-api/utils';
 import { getEffectiveVideoCompatibleParams } from './video-binding-utils';
+import { normalizeGPTImage25ResolutionParams } from './model-adapters/image-size-quality-resolver';
 
 type PersistedParams = Record<string, string>;
 
@@ -161,7 +162,7 @@ function migrateLegacyGPTImageQualityParam(
   const hasGPTResolutionOptions =
     resolutionOptions.has('1k') &&
     resolutionOptions.has('2k') &&
-    resolutionOptions.has('4k');
+    (resolutionOptions.has('4k') || resolutionOptions.has('auto'));
   const hasOfficialGPTQualityOptions =
     qualityOptions.has('auto') &&
     qualityOptions.has('low') &&
@@ -178,7 +179,7 @@ function migrateLegacyGPTImageQualityParam(
 
   if (
     persistedQuality &&
-    resolutionOptions.has(persistedQuality) &&
+    ['1k', '2k', '4k'].includes(persistedQuality) &&
     !resolutionOptions.has(persistedResolution)
   ) {
     nextParams.resolution = persistedQuality;
@@ -186,6 +187,11 @@ function migrateLegacyGPTImageQualityParam(
 
   if (persistedQuality && !qualityOptions.has(persistedQuality)) {
     delete nextParams.quality;
+  }
+
+  // The removed top tier restores to the highest selectable billing tier.
+  if (nextParams.resolution === '4k' && !resolutionOptions.has('4k')) {
+    nextParams.resolution = '2k';
   }
 
   return nextParams;
@@ -198,9 +204,9 @@ function sanitizeSelectedParams(
 ): PersistedParams {
   const compatibleParams = getCompatibleParams(modelId);
   const excludeParamIds = new Set(options?.excludeParamIds || []);
-  const persistedParams = migrateLegacyGPTImageQualityParam(
-    compatibleParams,
-    asRecord(rawParams)
+  const persistedParams = normalizeGPTImage25ResolutionParams(
+    modelId,
+    migrateLegacyGPTImageQualityParam(compatibleParams, asRecord(rawParams))
   );
   const nextParams: PersistedParams = {};
 

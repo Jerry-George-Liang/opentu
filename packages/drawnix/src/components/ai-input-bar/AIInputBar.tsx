@@ -16,6 +16,7 @@
  * - Smart Suggestion Panel for #model
  */
 
+import { normalizeGPTImage25ResolutionParams } from '../../services/model-adapters/image-size-quality-resolver';
 import React, {
   useState,
   useEffect,
@@ -4785,7 +4786,7 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
           } else {
             next[paramId] = value;
           }
-          return next;
+          return normalizeGPTImage25ResolutionParams(selectedModel, next);
         });
 
         // 关闭下拉菜单并保持焦点
@@ -4794,7 +4795,7 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
           setTimeout(() => inputRef.current?.focus(), 0);
         }
       },
-      [clearTriggerSymbol]
+      [clearTriggerSymbol, selectedModel]
     );
 
     // 处理个数选择
