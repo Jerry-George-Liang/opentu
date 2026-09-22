@@ -106,6 +106,7 @@ describe('MiniMax-H3 video workflow', () => {
   });
 
   it('preserves a public video URL without reading the local cache', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
     const getCachedBlob = vi.spyOn(unifiedCacheService, 'getCachedBlob');
     const submission = await prepareMiniMaxH3Submission(
       {
@@ -304,6 +305,7 @@ describe('MiniMax-H3 video workflow', () => {
   });
 
   it('rejects an encoded request body over the 64MB provider limit', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')));
     vi.stubGlobal(
       'TextEncoder',
       class {
