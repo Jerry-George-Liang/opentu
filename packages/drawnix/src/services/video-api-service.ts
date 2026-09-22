@@ -324,6 +324,13 @@ class VideoAPIService {
             size: params.size,
             ratio: params.params?.ratio,
             referenceImages: miniMaxReferenceImages,
+            referenceVideos: Array.isArray(params.params?.input_videos)
+              ? params.params.input_videos.filter(
+                  (value): value is string => typeof value === 'string'
+                )
+              : typeof params.params?.input_video === 'string'
+              ? [params.params.input_video]
+              : [],
             params: params.params,
           },
           { provider: providerContext }

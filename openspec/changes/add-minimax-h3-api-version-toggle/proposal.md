@@ -10,13 +10,15 @@
 - 增加默认关闭的提示词增强开关。开启后调用 Context IR 并轮询增强结果，成功后自动提交视频，失败时终止并反馈供应商错误。
 - 主输入栏按界面语言在输入文本末尾附加中文或英文输出指令，不翻译返回结果、不增加 language 请求字段。
 - 已完成的 768P MiniMax-H3 任务可通过 source_task_id 发起 2K 重制；UI 和业务层均校验资格。
+- MiniMax-H3 支持最多 3 个参考视频；本地 MP4/MOV 素材在请求前从缓存转为 Data URL，公网 HTTP(S) 地址尝试读取并转换，读取失败或类型不匹配时保留原 URL。
+- 为 Base64 膨胀预留空间：本地参考视频合计不超过 47 MiB，序列化后的完整请求体不超过 64 MiB，超限时在供应商请求前给出明确错误。
 - 保留任务执行器写入的远端 ID 与供应商路由，避免任务完成回写丢失升 2K 所需信息。
 - 不限制 Key 分组，不自动切换供应商；接口是否支持由实际响应决定。
 
 ## Impact
 
 - Affected specs: provider-routing
-- Affected code: MiniMax-H3 参数、AIInputBar、视频 API/工作流、任务队列和重制操作。
+- Affected code: MiniMax-H3 参数、AIInputBar、素材库筛选、视频 API/工作流、任务队列和重制操作。
 - 不新增依赖、环境变量或数据迁移；其他模型保持原有接口。
 
 ## Compatibility

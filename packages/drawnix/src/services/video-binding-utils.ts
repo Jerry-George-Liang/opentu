@@ -312,6 +312,7 @@ export function buildMiniMaxH3VideoRequest(params: {
   size?: string | null;
   ratio?: unknown;
   referenceImages?: string[];
+  referenceVideos?: string[];
 }): Record<string, unknown> {
   const parsedDuration = Number(params.duration);
   const duration =
@@ -330,17 +331,38 @@ export function buildMiniMaxH3VideoRequest(params: {
   const referenceImage = (params.referenceImages || [])
     .map((url) => url?.trim())
     .find(Boolean);
+  const referenceVideos = (params.referenceVideos || [])
+    .map((url) => url?.trim())
+    .filter((url): url is string => Boolean(url));
+  if (referenceVideos.length > 3) {
+    throw new Error('MiniMax-H3 参考视频最多支持 3 个');
+  }
   const hasReferenceImages = Boolean(referenceImage);
   const ratio =
     MINIMAX_H3_RATIOS.has(requestedRatio) &&
-    (requestedRatio !== 'adaptive' || hasReferenceImages)
+    (requestedRatio !== 'adaptive' || hasReferenceImages || referenceVideos.length > 0)
       ? requestedRatio
+      : hasReferenceImages || referenceVideos.length > 0
+      ? 'adaptive'
       : '16:9';
   const content: Array<Record<string, unknown>> = [
     { type: 'text', text: params.prompt },
   ];
 
-  if (referenceImage) {
+  if (referenceVideos.length > 0) {
+    const images = (params.referenceImages || []).map(url => url.trim()).filter(Boolean);
+    if (images.length > 9) throw new Error('MiniMax-H3 参考图片最多支持 9 张');
+    for (const url of images) {
+      content.push({ type: 'image_url', role: 'reference_image', image_url: { url } });
+    }
+    for (const referenceVideo of referenceVideos) {
+      content.push({
+        type: 'video_url',
+        role: 'reference_video',
+        video_url: { url: referenceVideo },
+      });
+    }
+  } else if (referenceImage) {
     content.push({
       type: 'image_url',
       role: 'first_frame',

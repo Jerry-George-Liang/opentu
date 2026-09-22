@@ -58,3 +58,34 @@ The system SHALL support regeneration of completed 768P MiniMax-H3 tasks using t
 - **GIVEN** a source that is already 2K, is not 768P, is incomplete, or lacks a remote ID
 - **WHEN** upgrade availability is computed or the business action is invoked
 - **THEN** the system SHALL reject the action with a clear reason
+
+### Requirement: MiniMax-H3 Reference Videos
+
+The system SHALL support MiniMax-H3 reference-to-video input without persisting inline video data in the workflow.
+
+#### Scenario: Submit local reference videos
+
+- **GIVEN** up to three cached local MP4 or MOV assets
+- **WHEN** the user submits MiniMax-H3 generation or Context IR
+- **THEN** the system SHALL read each asset from the local media cache at request time
+- **AND** encode it as a video Data URL in content[].video_url with role=reference_video
+- **AND** the persisted workflow SHALL retain only the lightweight virtual asset URL
+
+#### Scenario: Submit public reference videos
+
+- **GIVEN** a public HTTP(S) reference video URL
+- **WHEN** the user submits MiniMax-H3
+- **THEN** the system SHALL attempt to read MP4/MOV content and encode it as a video Data URL
+- **AND** preserve the original URL if reading fails or the media type does not match
+
+#### Scenario: Enforce inline request limits
+
+- **WHEN** more than three reference videos are selected, a local video is not MP4/MOV, local video cache is missing, local videos exceed 47 MiB combined, or the serialized request exceeds 64 MiB
+- **THEN** the system SHALL reject the request before provider traffic
+- **AND** show a clear error that directs oversized local videos to a public URL
+
+#### Scenario: Preserve unsupported-model validation
+
+- **WHEN** video references are attached to a model without video-reference capability
+- **THEN** the existing capability validation SHALL reject the submission
+- **AND** supported non-H3 video models SHALL retain their existing behavior

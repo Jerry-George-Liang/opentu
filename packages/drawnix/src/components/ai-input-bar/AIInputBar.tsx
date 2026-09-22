@@ -127,6 +127,7 @@ import { unifiedCacheService } from '../../services/unified-cache-service';
 import {
   enhanceMiniMaxH3Prompt,
   isMiniMaxH3PromptEnhancementEnabled,
+  MINIMAX_H3_MAX_LOCAL_VIDEO_BYTES,
   MINIMAX_H3_PROMPT_ENHANCEMENT_PARAM_ID,
 } from '../../services/minimax-h3-video-workflow';
 import { initializeMCP, mcpRegistry } from '../../mcp';
@@ -216,6 +217,8 @@ import { isFrameElement } from '../../types/frame.types';
 import { matchFrameSizeForModel } from '../../utils/frame-size-matcher';
 import { PlaitDrawElement } from '@plait/draw';
 import { isPlaitVideo } from '../../interfaces/video';
+import { getVideoDimensions } from '../../data/video';
+import { getSupportedVideoFileMimeType } from '../../data/blob';
 import { isCardElement } from '../../types/card.types';
 import { isAudioNodeElement } from '../../types/audio-node.types';
 import {
@@ -750,6 +753,8 @@ const AI_INPUT_LONG_TEXT_MAX_VIEWPORT_RATIO = 0.65;
 const AI_INPUT_LONG_TEXT_MIN_MAX_HEIGHT = 320;
 const AI_INPUT_LONG_TEXT_MAX_HEIGHT = 680;
 const AI_INPUT_LINE_HEIGHT = 1.5;
+const AI_INPUT_IMAGE_ASSET_TYPES = [AssetType.IMAGE] as const;
+const AI_INPUT_VIDEO_ASSET_TYPES = [AssetType.IMAGE, AssetType.VIDEO] as const;
 type AIInputResizeMode = 'collapsed' | 'expanded' | 'long-text';
 type AIInputSubmitTrigger = 'button' | 'keyboard';
 
@@ -2505,12 +2510,23 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
     const localImageMessages = useMemo(
       () => ({
         invalidFile:
-          language === 'zh' ? '请上传图片文件' : 'Please upload image files',
-        fileTooLarge:
+          language === 'zh'
+            ? '请上传图片或视频文件'
+            : 'Please upload image or video files',
+        imageTooLarge:
           language === 'zh'
             ? '图片大小不能超过 25MB'
-            : 'Image size cannot exceed 25MB',
-        loadFailed: language === 'zh' ? '加载图片失败' : 'Failed to load image',
+            : 'Images cannot exceed 25MB',
+        videoTooLarge: (maxSizeMb: number, requiresPublicUrl: boolean) =>
+          language === 'zh'
+            ? requiresPublicUrl
+              ? `MiniMax-H3 本地视频不能超过 ${maxSizeMb}MB；更大视频请使用公网 URL`
+              : `视频大小不能超过 ${maxSizeMb}MB`
+            : requiresPublicUrl
+            ? `Local MiniMax-H3 videos cannot exceed ${maxSizeMb}MB; use a public URL for larger videos`
+            : `Videos cannot exceed ${maxSizeMb}MB`,
+        loadFailed:
+          language === 'zh' ? '加载图片或视频失败' : 'Failed to load media',
         compressionFailed:
           language === 'zh' ? '图片压缩失败' : 'Image compression failed',
         compressing: (sizeMb: number) =>
@@ -3838,6 +3854,17 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
       (asset: Asset): Promise<SelectedContent> =>
         new Promise((resolve) => {
           try {
+            if (
+              asset.type === AssetType.VIDEO ||
+              asset.type === AssetType.AUDIO
+            ) {
+              resolve({
+                type: asset.type === AssetType.VIDEO ? 'video' : 'audio',
+                url: asset.url,
+                name: asset.name,
+              });
+              return;
+            }
             const img = new Image();
             img.onload = () => {
               resolve({
@@ -3961,17 +3988,59 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
         const newContent: SelectedContent[] = [];
 
         for (const [index, file] of fileList.entries()) {
-          if (!file.type.startsWith('image/')) {
+          const isImage = file.type.startsWith('image/');
+          const videoMime = getSupportedVideoFileMimeType(file);
+          const isVideo = Boolean(videoMime);
+          if (!isImage && !isVideo) {
             MessagePlugin.error(localImageMessages.invalidFile);
             continue;
           }
 
-          if (file.size > 25 * 1024 * 1024) {
-            MessagePlugin.error(localImageMessages.fileTooLarge);
+          const isMiniMaxH3Video =
+            isVideo && isMiniMaxH3Model(selectedModel);
+          const videoSizeLimit = isMiniMaxH3Video
+            ? MINIMAX_H3_MAX_LOCAL_VIDEO_BYTES
+            : 50 * 1024 * 1024;
+          if (file.size > (isVideo ? videoSizeLimit : 25 * 1024 * 1024)) {
+            MessagePlugin.error(
+              isVideo
+                ? localImageMessages.videoTooLarge(
+                    videoSizeLimit / (1024 * 1024),
+                    isMiniMaxH3Video
+                  )
+                : localImageMessages.imageTooLarge
+            );
             continue;
           }
 
           try {
+            if (videoMime) {
+              const normalizedVideo = new File([file], file.name, {
+                type: videoMime,
+              });
+              const asset = await addAsset(
+                normalizedVideo,
+                AssetType.VIDEO,
+                AssetSource.LOCAL,
+                file.name
+              );
+              const objectUrl = URL.createObjectURL(normalizedVideo);
+              let dimensions;
+              try {
+                dimensions = await getVideoDimensions(objectUrl);
+              } finally {
+                URL.revokeObjectURL(objectUrl);
+              }
+              newContent.push({
+                type: 'video',
+                url: asset.url,
+                name: file.name || `上传视频 ${index + 1}`,
+                width: dimensions.width,
+                height: dimensions.height,
+              });
+              continue;
+            }
+
             let processedBlob: Blob = file;
 
             if (file.size > 10 * 1024 * 1024) {
@@ -4057,7 +4126,12 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
           setUploadedContent(nextUploadedContent);
         }
       },
-      [addAsset, fileToBase64WithDimensions, localImageMessages]
+      [
+        addAsset,
+        fileToBase64WithDimensions,
+        localImageMessages,
+        selectedModel,
+      ]
     );
 
     const handleDroppedInputFiles = useCallback(
@@ -5283,6 +5357,27 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
           }
 
           // 引用预检通过后再请求凭据，避免无效引用触发无意义的 API Key 弹窗。
+          if (effectiveContent.some((item) => item.type === 'video')) {
+            const errors = validateCanvasAssociationCapability({
+              generationType: effectiveGenerationType,
+              modelId: effectiveSelectedModel,
+              content: effectiveContent,
+            });
+            if (errors.length > 0) {
+              MessagePlugin.error(errors.join('；'));
+              trackSubmitStatus('failed', {
+                submitMode: 'preflight',
+                submit_mode: 'preflight',
+                failureReason: 'input_capability_mismatch',
+                failure_reason: 'input_capability_mismatch',
+                errorCount: errors.length,
+                error_count: errors.length,
+              });
+              submitLockRef.current = false;
+              setIsSubmitting(false);
+              return;
+            }
+          }
           const currentRouteType =
             effectiveGenerationType === 'video'
               ? 'video'
@@ -5521,6 +5616,7 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
                   size: parsedParams.size,
                   ratio: parsedParams.extraParams?.ratio,
                   referenceImages: miniMaxReferenceImages,
+                  referenceVideos: selection.videos,
                   params: parsedParams.extraParams,
                 },
                 { provider: plan.provider }
@@ -7986,18 +8082,28 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*"
+                  accept="image/*,video/*"
                   multiple
                   onChange={handleFileChange}
                   style={{ display: 'none' }}
                 />
 
                 <HoverTip
-                  content={language === 'zh' ? '上传图片' : 'Upload images'}
+                  content={
+                    language === 'zh'
+                      ? '上传图片或视频'
+                      : 'Upload images or videos'
+                  }
                   showArrow={false}
                 >
                   <button
                     className="ai-input-bar__upload-btn"
+                    aria-label={
+                      language === 'zh'
+                        ? '上传图片或视频'
+                        : 'Upload images or videos'
+                    }
+                    disabled={isSubmitting}
                     onMouseDown={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
@@ -8450,7 +8556,11 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
               isOpen={showMediaLibrary}
               onClose={() => setShowMediaLibrary(false)}
               mode={SelectionMode.SELECT}
-              filterType={AssetType.IMAGE}
+              allowedTypes={
+                generationType === 'video'
+                  ? AI_INPUT_VIDEO_ASSET_TYPES
+                  : AI_INPUT_IMAGE_ASSET_TYPES
+              }
               onSelect={handleMediaLibrarySelect}
               onSelectMultiple={handleMediaLibrarySelectMultiple}
               batchSelectButtonText="批量插入对话框"

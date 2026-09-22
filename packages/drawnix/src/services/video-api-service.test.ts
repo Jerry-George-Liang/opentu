@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   appendVideoOutputParams,
   buildMiniMaxH3VideoRequest,
@@ -7,6 +7,117 @@ import {
   resolveMiniMaxH3VideoSubmitPath,
   resolveVideoPollPathForModel,
 } from './video-binding-utils';
+import { providerTransport } from './provider-routing/provider-transport';
+import { unifiedCacheService } from './unified-cache-service';
+import { videoAPIService } from './video-api-service';
+
+const serviceMocks = vi.hoisted(() => ({
+  resolveInvocationPlanFromRoute: vi.fn(),
+  startLLMApiLog: vi.fn(() => 'video-log-1'),
+  completeLLMApiLog: vi.fn(),
+  failLLMApiLog: vi.fn(),
+  updateLLMApiLogMetadata: vi.fn(),
+}));
+
+vi.mock('./provider-routing', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./provider-routing')>();
+  return {
+    ...actual,
+    resolveInvocationPlanFromRoute:
+      serviceMocks.resolveInvocationPlanFromRoute,
+  };
+});
+
+vi.mock('./media-executor/llm-api-logger', () => ({
+  startLLMApiLog: serviceMocks.startLLMApiLog,
+  completeLLMApiLog: serviceMocks.completeLLMApiLog,
+  failLLMApiLog: serviceMocks.failLLMApiLog,
+  updateLLMApiLogMetadata: serviceMocks.updateLLMApiLogMetadata,
+}));
+
+const testProvider = {
+  profileId: 'profile-minimax',
+  profileName: 'MiniMax 测试供应商',
+  providerType: 'openai-compatible',
+  baseUrl: 'https://video.example.com/v1',
+  apiKey: 'test-key',
+  authType: 'bearer' as const,
+};
+
+describe('VideoAPIService MiniMax-H3 submission', () => {
+  beforeEach(() => {
+    serviceMocks.resolveInvocationPlanFromRoute.mockReturnValue({
+      provider: testProvider,
+      binding: null,
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('materializes a local video into the final provider request body', async () => {
+    vi.stubGlobal(
+      'FileReader',
+      class {
+        result: string | null = null;
+        onloadend: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+
+        readAsDataURL(blob: Blob): void {
+          this.result = `data:${blob.type};base64,c2VydmljZS12aWRlbw==`;
+          queueMicrotask(() => this.onloadend?.());
+        }
+      }
+    );
+    vi.spyOn(unifiedCacheService, 'getCachedBlob').mockResolvedValue(
+      new Blob(['service-video'], { type: 'video/mp4' })
+    );
+    const send = vi.spyOn(providerTransport, 'send').mockResolvedValue(
+      new Response(JSON.stringify({ task_id: 'h3-task-1', status: 'queued' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+
+    const result = await videoAPIService.submitVideoGeneration({
+      model: 'MiniMax-H3',
+      prompt: '参考本地视频生成',
+      params: {
+        input_videos: ['/asset-library/local-reference.mp4'],
+      },
+    });
+
+    expect(result).toMatchObject({
+      id: 'h3-task-1',
+      model: 'MiniMax-H3',
+      status: 'queued',
+    });
+    expect(send).toHaveBeenCalledWith(
+      testProvider,
+      expect.objectContaining({
+        path: '/v2/video_generation',
+        baseUrlStrategy: 'trim-v1',
+        method: 'POST',
+      })
+    );
+    expect(JSON.parse(String(send.mock.calls[0][1].body))).toMatchObject({
+      model: 'MiniMax-H3',
+      content: [
+        { type: 'text', text: '参考本地视频生成' },
+        {
+          type: 'video_url',
+          role: 'reference_video',
+          video_url: {
+            url: 'data:video/mp4;base64,c2VydmljZS12aWRlbw==',
+          },
+        },
+      ],
+    });
+  });
+});
 
 describe('appendVideoOutputParams', () => {
   it('将 MiniMax-H3 的分辨率和比例写入 multipart 请求', () => {
@@ -71,6 +182,64 @@ describe('appendVideoOutputParams', () => {
         },
       ],
       ratio: 'adaptive',
+    });
+  });
+
+  it('将 MiniMax-H3 输入视频按官方 reference_video 结构写入请求', () => {
+    expect(
+      buildMiniMaxH3VideoRequest({
+        prompt: '参考视频生成新视频',
+        referenceVideos: [
+          ' https://cdn.example.com/ref-1.mp4 ',
+          'https://cdn.example.com/ref-2.mov',
+        ],
+        referenceImages: ['https://cdn.example.com/reference.png'],
+      })
+    ).toMatchObject({
+      content: [
+        { type: 'text', text: '参考视频生成新视频' },
+        {
+          type: 'image_url',
+          role: 'reference_image',
+          image_url: { url: 'https://cdn.example.com/reference.png' },
+        },
+        {
+          type: 'video_url',
+          role: 'reference_video',
+          video_url: { url: 'https://cdn.example.com/ref-1.mp4' },
+        },
+        {
+          type: 'video_url',
+          role: 'reference_video',
+          video_url: { url: 'https://cdn.example.com/ref-2.mov' },
+        },
+      ],
+      ratio: 'adaptive',
+    });
+  });
+
+  it('保留 MiniMax-H3 参考视频的 2K 与显式比例', () => {
+    const request = buildMiniMaxH3VideoRequest({
+      prompt: '帮我重新升级成2k，其他不变',
+      size: '2k',
+      ratio: '9:16',
+      duration: '4',
+      referenceVideos: ['data:video/mp4;base64,dmlkZW8='],
+    });
+
+    expect(request).toMatchObject({
+      model: 'MiniMax-H3',
+      resolution: '2K',
+      duration: 4,
+      ratio: '9:16',
+      content: [
+        { type: 'text', text: '帮我重新升级成2k，其他不变' },
+        {
+          type: 'video_url',
+          role: 'reference_video',
+          video_url: { url: 'data:video/mp4;base64,dmlkZW8=' },
+        },
+      ],
     });
   });
 
