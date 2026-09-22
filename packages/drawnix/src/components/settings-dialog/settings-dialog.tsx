@@ -98,6 +98,10 @@ import { WinBoxWindow } from '../winbox';
 import { TtsSettingsPanel } from '../project-drawer/TtsSettingsPanel';
 import { TuziAccountPanel } from './TuziAccountPanel';
 import { isTuziEmbeddedMode } from '../../services/tuzi-embedded-config';
+import {
+  requestTuziParentContext,
+  TUZI_BRIDGE_EVENT,
+} from '../../services/tuzi-postmessage-bridge';
 import { syncTuziSessionProviders } from '../../services/tuzi-session-provider-sync';
 import { hasTuziSystemToken } from '../../services/tuzi-token-auth';
 import { openModelBenchmarkTool } from '../../services/model-benchmark-launcher';
@@ -1140,17 +1144,25 @@ export const SettingsDialog = ({
   } = useDeviceType();
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const [dialogWidth, setDialogWidth] = useState(0);
-  const settingsSections = useMemo(
-    () =>
-      isTuziEmbeddedMode()
-        ? [TUZI_ACCOUNT_SECTION, ...VIEW_SECTIONS]
-        : VIEW_SECTIONS,
-    []
-  );
+  const [tuziMode, setTuziMode] = useState(() => isTuziEmbeddedMode());
+  useEffect(() => {
+    const syncBridgeMode = () => setTuziMode(isTuziEmbeddedMode());
+    window.addEventListener(TUZI_BRIDGE_EVENT, syncBridgeMode);
+
+    if (appState.openSettings) {
+      void requestTuziParentContext({ refresh: true }).finally(syncBridgeMode);
+    }
+
+    return () => window.removeEventListener(TUZI_BRIDGE_EVENT, syncBridgeMode);
+  }, [appState.openSettings]);
+  const settingsSections = tuziMode
+    ? [TUZI_ACCOUNT_SECTION, ...VIEW_SECTIONS]
+    : VIEW_SECTIONS;
 
   const [activeView, setActiveView] = useState<SettingsView>(() =>
-    isTuziEmbeddedMode() ? 'tuzi-account' : 'providers'
+    tuziMode ? 'tuzi-account' : 'providers'
   );
+  const [tuziGroupPickerRequest, setTuziGroupPickerRequest] = useState(0);
   const [selectedProfileId, setSelectedProfileId] = useState(
     LEGACY_DEFAULT_PROVIDER_PROFILE_ID
   );
@@ -1261,7 +1273,7 @@ export const SettingsDialog = ({
   );
 
   const enabledProfiles = profilesDraft.filter((profile) => profile.enabled);
-  const showTuziProviders = !isTuziEmbeddedMode() || hasTuziSystemToken();
+  const showTuziProviders = !tuziMode || hasTuziSystemToken();
   const isCompactLayout =
     isMobileDevice || viewportWidth <= SETTINGS_DIALOG_COMPACT_BREAKPOINT;
 
@@ -1364,7 +1376,7 @@ export const SettingsDialog = ({
     });
     setActiveView(nextView);
 
-    if (nextView === 'providers' && isTuziEmbeddedMode()) {
+    if (nextView === 'providers' && tuziMode) {
       const safeProfiles = cloneValue(providerProfilesSettings.get());
       setProfilesDraft(safeProfiles);
       setSelectedProfileId((currentProfileId) =>
@@ -1540,7 +1552,9 @@ export const SettingsDialog = ({
     }
     setShowWorkZoneCard(nextShowWorkZoneCard);
 
-    const nextActiveView: SettingsView = 'providers';
+    const nextActiveView: SettingsView = tuziMode
+      ? 'tuzi-account'
+      : 'providers';
     setActiveView(nextActiveView);
     setCompactProviderMode(
       pendingProviderIntent && isCompactLayout ? 'detail' : 'catalog'
@@ -1564,7 +1578,7 @@ export const SettingsDialog = ({
     if (pendingProviderIntent?.action === 'create') {
       applyProviderNavigationIntent(pendingProviderIntent, nextProfiles);
     }
-  }, [appState.openSettings]);
+  }, [appState.openSettings, tuziMode]);
 
   useEffect(() => {
     if (!selectedProfileId && profilesDraft[0]) {
@@ -1958,6 +1972,12 @@ export const SettingsDialog = ({
     baseProfiles?: ProviderProfile[]
   ) => {
     const sourceProfiles = baseProfiles || profilesDraft;
+
+    if (intent.action === 'tuzi-groups') {
+      setActiveView('tuzi-account');
+      setTuziGroupPickerRequest((current) => current + 1);
+      return sourceProfiles;
+    }
 
     setActiveView('providers');
     if (isCompactLayout) {
@@ -4764,7 +4784,11 @@ export const SettingsDialog = ({
   const renderActiveView = () => {
     if (activeView === 'tuzi-account') {
       return (
-        <TuziAccountPanel onProvidersChanged={handleTuziProvidersChanged} />
+        <TuziAccountPanel
+          onProvidersChanged={handleTuziProvidersChanged}
+          onSetupCompleted={closeSettingsDialog}
+          openProviderSelectionRequest={tuziGroupPickerRequest}
+        />
       );
     }
     if (activeView === 'canvas') {
