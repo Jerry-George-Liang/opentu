@@ -4,6 +4,11 @@ import {
   normalizeMiniMaxH3VideoResponse,
 } from './video-binding-utils';
 import { providerTransport } from './provider-routing/provider-transport';
+import { unifiedCacheService } from './unified-cache-service';
+import {
+  isPublicHttpMediaUrl,
+  isVirtualMediaUrl,
+} from '../utils/virtual-media-url';
 
 export const MINIMAX_H3_CONTEXT_IR_MODEL = 'MiniMax-H3';
 export const MINIMAX_H3_CONTEXT_IR_PATH = '/v2/h3_context_ir';
@@ -16,6 +21,11 @@ export const MINIMAX_H3_SOURCE_RESOLUTION_PARAM_ID = 'source_resolution';
 const DEFAULT_POLL_INTERVAL = 5000;
 const DEFAULT_MAX_POLL_ATTEMPTS = 1080;
 const MINIMAX_H3_POLL_PATH = '/v2/query/video_generation/{taskId}';
+const MINIMAX_H3_MAX_REQUEST_BODY_BYTES = 64 * 1024 * 1024;
+export const MINIMAX_H3_MAX_LOCAL_VIDEO_BYTES = 47 * 1024 * 1024;
+const MINIMAX_H3_VIDEO_DATA_URL_PATTERN =
+  /^data:video\/(?:mp4|quicktime);base64,/i;
+const MINIMAX_H3_VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime']);
 
 export interface MiniMaxH3SubmissionInput {
   prompt: string;
@@ -24,6 +34,7 @@ export interface MiniMaxH3SubmissionInput {
   size?: string | null;
   ratio?: unknown;
   referenceImages?: string[];
+  referenceVideos?: string[];
   params?: Record<string, unknown> | null;
 }
 
@@ -40,6 +51,120 @@ export interface PrepareMiniMaxH3SubmissionOptions {
   signal?: AbortSignal;
   pollInterval?: number;
   maxPollAttempts?: number;
+}
+
+async function materializeMiniMaxH3ReferenceVideos(
+  referenceVideos?: string[],
+  provider?: ResolvedProviderContext
+): Promise<string[]> {
+  const pending: Array<string | Blob> = [];
+  let localVideoBytes = 0;
+
+  for (const rawReference of referenceVideos || []) {
+    const reference = rawReference.trim();
+    if (!reference) continue;
+
+    if (MINIMAX_H3_VIDEO_DATA_URL_PATTERN.test(reference)) {
+      pending.push(reference);
+      continue;
+    }
+    if (isPublicHttpMediaUrl(reference)) {
+      // Canvas-generated videos are usually stored as provider HTTP URLs.
+      // Normalize readable URLs to the same inline representation used by
+      // uploaded videos; this avoids provider/channel-specific URL fetching
+      // failures while preserving a URL fallback for CORS-protected sources.
+      try {
+        const providerOrigin = provider?.baseUrl
+          ? new URL(provider.baseUrl).origin
+          : '';
+        const referenceOrigin = new URL(reference).origin;
+        const response =
+          provider && providerOrigin === referenceOrigin
+            ? await providerTransport.send(provider, {
+                path: reference,
+                method: 'GET',
+                headers: { Accept: 'video/*,application/octet-stream' },
+              })
+            : await fetch(reference, {
+                referrerPolicy: 'no-referrer',
+              });
+        if (response.ok) {
+          const blob = await response.blob();
+          const mimeType = blob.type.toLowerCase();
+          if (MINIMAX_H3_VIDEO_MIME_TYPES.has(mimeType)) {
+            localVideoBytes += blob.size;
+            if (localVideoBytes > MINIMAX_H3_MAX_LOCAL_VIDEO_BYTES) {
+              throw new Error(
+                'MiniMax-H3 本地参考视频总大小不能超过 47MB；更大视频请使用公网 URL'
+              );
+            }
+            pending.push(blob);
+            continue;
+          }
+        }
+      } catch (error) {
+        if (error instanceof Error && /总大小不能超过/.test(error.message)) {
+          throw error;
+        }
+      }
+      pending.push(reference);
+      continue;
+    }
+    if (!isVirtualMediaUrl(reference)) {
+      throw new Error('MiniMax-H3 参考视频必须是本地素材或公网 HTTP(S) 地址');
+    }
+
+    const blob = await unifiedCacheService.getCachedBlob(reference, {
+      allowNetwork: false,
+    });
+    if (!blob) {
+      throw new Error('本地参考视频缓存已失效，请重新上传');
+    }
+    if (!MINIMAX_H3_VIDEO_MIME_TYPES.has(blob.type.toLowerCase())) {
+      throw new Error('MiniMax-H3 本地参考视频仅支持 MP4 或 MOV 格式');
+    }
+    localVideoBytes += blob.size;
+    if (localVideoBytes > MINIMAX_H3_MAX_LOCAL_VIDEO_BYTES) {
+      throw new Error(
+        'MiniMax-H3 本地参考视频总大小不能超过 47MB；更大视频请使用公网 URL'
+      );
+    }
+    pending.push(blob);
+  }
+
+  const materialized: string[] = [];
+  for (const reference of pending) {
+    if (typeof reference === 'string') {
+      materialized.push(reference);
+      continue;
+    }
+    const { blobToDataUrl } = await import('@aitu/utils');
+    materialized.push(await blobToDataUrl(reference));
+  }
+
+  return materialized;
+}
+
+async function prepareMiniMaxH3MediaInput(
+  input: MiniMaxH3SubmissionInput,
+  provider?: ResolvedProviderContext
+): Promise<MiniMaxH3SubmissionInput> {
+  return {
+    ...input,
+    referenceVideos: await materializeMiniMaxH3ReferenceVideos(
+      input.referenceVideos,
+      provider
+    ),
+  };
+}
+
+function assertMiniMaxH3RequestBodySize(body: Record<string, unknown>): void {
+  const byteLength = new TextEncoder().encode(JSON.stringify(body)).byteLength;
+  if (byteLength > MINIMAX_H3_MAX_REQUEST_BODY_BYTES) {
+    throw new Error(
+      'MiniMax-H3 请求体不能超过 64MB，请减少本地参考视频数量或改用公网 URL'
+    );
+  }
 }
 
 function normalizeBoolean(value: unknown): boolean {
@@ -237,12 +362,14 @@ async function submitContextIRTask(
   input: MiniMaxH3SubmissionInput,
   options: PrepareMiniMaxH3SubmissionOptions
 ): Promise<string> {
+  const requestBody = buildMiniMaxH3ContextIRRequest(input);
+  assertMiniMaxH3RequestBodySize(requestBody);
   const response = await providerTransport.send(options.provider, {
     path: MINIMAX_H3_CONTEXT_IR_PATH,
     baseUrlStrategy: 'trim-v1',
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildMiniMaxH3ContextIRRequest(input)),
+    body: JSON.stringify(requestBody),
     signal: options.signal,
     fetcher: options.fetcher,
   });
@@ -315,7 +442,8 @@ export async function enhanceMiniMaxH3Prompt(
   options: PrepareMiniMaxH3SubmissionOptions
 ): Promise<string> {
   options.signal?.throwIfAborted();
-  const taskId = await submitContextIRTask(input, options);
+  const preparedInput = await prepareMiniMaxH3MediaInput(input, options.provider);
+  const taskId = await submitContextIRTask(preparedInput, options);
   return pollContextIRPrompt(taskId, options);
 }
 
@@ -332,14 +460,18 @@ export async function prepareMiniMaxH3Submission(
     };
   }
 
-  let prompt = input.prompt;
+  const preparedInput = await prepareMiniMaxH3MediaInput(input, options.provider);
+  let prompt = preparedInput.prompt;
   if (isMiniMaxH3PromptEnhancementEnabled(input.params)) {
-    prompt = await enhanceMiniMaxH3Prompt(input, options);
+    prompt = await enhanceMiniMaxH3Prompt(preparedInput, options);
   }
+
+  const body = buildMiniMaxH3VideoRequest({ ...preparedInput, prompt });
+  assertMiniMaxH3RequestBodySize(body);
 
   return {
     path: '/v2/video_generation',
-    body: buildMiniMaxH3VideoRequest({ ...input, prompt }),
+    body,
     prompt,
     taskType: 'generation',
   };
