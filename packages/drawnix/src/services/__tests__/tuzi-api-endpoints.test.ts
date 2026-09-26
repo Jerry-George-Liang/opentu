@@ -1,6 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 describe('tuzi-api-endpoints', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it('只把内置 tuzi-api 上游 origin 视为可信', async () => {
     vi.resetModules();
 
@@ -57,6 +61,150 @@ describe('tuzi-api-endpoints', () => {
       },
     ]);
     expect(endpoints.length).toBeLessThan(TUZI_API_FALLBACK_ENDPOINTS.length);
+  });
+
+  it.each([
+    'https://opentu.ai',
+    'https://pr.opentu.ai',
+    'http://localhost:7200',
+    'https://self-hosted.example/opentu/',
+  ])(
+    '通过 %s 的同源代理读取站点，不携带凭据，并缓存成功结果',
+    async (origin) => {
+      vi.resetModules();
+      vi.stubGlobal('location', new URL(origin));
+      const endpoints = [{ name: '主站点', url: 'https://api.tu-zi.com' }];
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: { api_address_list: endpoints },
+          })
+        )
+      );
+      vi.stubGlobal('fetch', fetchMock);
+
+      const { loadTuziApiEndpointSources } = await import(
+        '../provider-routing/tuzi-api-endpoints'
+      );
+      const result = await loadTuziApiEndpointSources();
+
+      expect(result).toEqual([expect.objectContaining(endpoints[0])]);
+      expect(fetchMock).toHaveBeenCalledWith(
+        `${new URL(origin).origin}/__opentu_tuzi_session__/api/status`,
+        { cache: 'no-store', credentials: 'omit' }
+      );
+      expect(await loadTuziApiEndpointSources()).toBe(result);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('Worker 没有 window 时仍通过当前 origin 的代理读取站点', async () => {
+    vi.resetModules();
+    vi.stubGlobal('window', undefined);
+    vi.stubGlobal('location', new URL('https://opentu.ai/sw.js'));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ success: true, data: { api_address_list: [] } })
+        )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { loadTuziApiEndpointSources, TUZI_API_FALLBACK_ENDPOINTS } =
+      await import('../provider-routing/tuzi-api-endpoints');
+
+    await expect(loadTuziApiEndpointSources()).resolves.toEqual(
+      TUZI_API_FALLBACK_ENDPOINTS
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://opentu.ai/__opentu_tuzi_session__/api/status',
+      { cache: 'no-store', credentials: 'omit' }
+    );
+  });
+
+  it.each([
+    undefined,
+    'https://api.tu-zi.com/opentu/',
+    'file:///opentu/index.html',
+  ])('在无 HTTP origin 或与上游同源时直接读取状态（%s）', async (url) => {
+    vi.resetModules();
+    if (!url) {
+      vi.stubGlobal('window', undefined);
+    }
+    vi.stubGlobal('location', url ? new URL(url) : undefined);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ success: true, data: { api_address_list: [] } })
+        )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { loadTuziApiEndpointSources, TUZI_API_STATUS_URL } = await import(
+      '../provider-routing/tuzi-api-endpoints'
+    );
+
+    await loadTuziApiEndpointSources();
+    expect(fetchMock).toHaveBeenCalledWith(TUZI_API_STATUS_URL, {
+      cache: 'no-store',
+      credentials: 'omit',
+    });
+  });
+
+  it('代理错误不会缓存为成功，后续调用可以恢复', async () => {
+    vi.resetModules();
+    vi.stubGlobal('location', new URL('https://opentu.ai'));
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('Bad Gateway', { status: 502 }))
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              api_address_list: [
+                { name: '主站点', url: 'https://api.tu-zi.com' },
+              ],
+            },
+          })
+        )
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { loadTuziApiEndpointSources } = await import(
+      '../provider-routing/tuzi-api-endpoints'
+    );
+    await expect(loadTuziApiEndpointSources()).rejects.toThrow('502');
+    await expect(loadTuziApiEndpointSources()).resolves.toEqual([
+      expect.objectContaining({ url: 'https://api.tu-zi.com' }),
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('代理返回 SPA HTML 时拒绝响应，baseUrl 列表仍回退到内置站点', async () => {
+    vi.resetModules();
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockImplementation(
+          async () => new Response('<!doctype html><html></html>')
+        )
+    );
+
+    const {
+      loadTuziApiEndpointSources,
+      loadTuziApiEndpointBaseUrls,
+      TUZI_API_FALLBACK_ENDPOINTS,
+    } = await import('../provider-routing/tuzi-api-endpoints');
+
+    await expect(loadTuziApiEndpointSources()).rejects.toThrow();
+    await expect(loadTuziApiEndpointBaseUrls()).resolves.toEqual(
+      TUZI_API_FALLBACK_ENDPOINTS.map((endpoint) => endpoint.url)
+    );
   });
 
   it('获取站点来源失败时，baseUrl 列表回退到内置 tuzi-api 站点', async () => {

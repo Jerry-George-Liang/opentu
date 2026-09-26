@@ -199,6 +199,24 @@ export function parseTuziApiAddressList(
   );
 }
 
+function resolveTuziApiStatusUrl(): string {
+  const currentLocation = globalThis.location;
+  if (
+    !currentLocation ||
+    !/^https?:$/.test(currentLocation.protocol) ||
+    currentLocation.origin === new URL(TUZI_API_STATUS_URL).origin
+  ) {
+    return TUZI_API_STATUS_URL;
+  }
+
+  // The public status endpoint does not allow cross-origin browser reads.
+  // Use the existing fixed-upstream proxy in both pages and workers.
+  return new URL(
+    '/__opentu_tuzi_session__/api/status',
+    currentLocation.origin
+  ).toString();
+}
+
 export async function loadTuziApiEndpointSources(): Promise<
   TuziApiEndpointSource[]
 > {
@@ -206,8 +224,9 @@ export async function loadTuziApiEndpointSources(): Promise<
     return tuziApiEndpointSourceCache;
   }
 
-  const response = await fetch(TUZI_API_STATUS_URL, {
+  const response = await fetch(resolveTuziApiStatusUrl(), {
     cache: 'no-store',
+    credentials: 'omit',
   });
   if (!response.ok) {
     throw new Error(`Failed to load tuzi-api endpoints: ${response.status}`);
