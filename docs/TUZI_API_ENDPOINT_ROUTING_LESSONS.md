@@ -1,6 +1,6 @@
 # tuzi-api 端点路由兜底经验
 
-更新日期：2026-09-25
+更新日期：2026-09-26
 
 ## 背景
 
@@ -38,7 +38,7 @@ OpenTu AI 网页版的供应商设置需要让用户选择 tuzi-api 的真实站
 
 这样设置页、模型发现和请求兜底使用同一份来源，不再分别维护站点列表。
 
-代理沿用 Vite、Netlify、Vercel、正式和预发布 Nginx 已有的 Session 代理规则，无需新增环境变量；其他自托管环境需提供等价代理，详见 [Tuzi 系统令牌接入](./TUZI_SYSTEM_TOKEN_INTEGRATION.md#反向代理)。只有静态文件的服务可能将代理路径回退为 SPA HTML，不能把 HTTP 200 当作成功的状态响应。代理失败仍按原有逻辑显示设置页提示并使用内置站点，不缓存失败，也不重新直连绕过 CORS。
+代理沿用 Vite、Netlify、Vercel、正式和预发布 Nginx 已有的 Session 代理规则，无需新增环境变量。Vite 默认代理到 `https://api.tu-zi.com`，保留现有 `VITE_TUZI_SESSION_PROXY_TARGET` 的配置能力；其他自托管环境需提供等价代理，详见 [Tuzi 系统令牌接入](./TUZI_SYSTEM_TOKEN_INTEGRATION.md#反向代理)。只有静态文件的服务可能将代理路径回退为 SPA HTML，不能把 HTTP 200 当作成功的状态响应。代理失败仍按原有逻辑显示设置页提示并使用内置站点，不缓存失败，也不重新直连绕过 CORS。
 
 ### 2. 设置页承载端点选择
 
@@ -106,55 +106,46 @@ pnpm --dir packages/drawnix exec vitest run \
 git diff --check
 ```
 
-## 2026-09-25 状态接口同源代理修复与 QA
+## 2026-09-26 状态接口同源代理修复与 QA
 
-### 范围和环境
+### 范围、环境和复现
 
-- 本次只修复公开状态请求的跨域读取，不修改账户鉴权、Provider 地址或巡检接口。两个巡检读取接口的 404 按用户决定暂缓处理。
-- 首次验证基线：`develop` / `fa0105c8`；macOS，Node.js `26.8.1`，pnpm `10.21.0`。后续上游同步结果见下方补充记录。
-- 使用已有依赖和 `7200` 开发服务；匿名读取代理，不传 Cookie、令牌或 API Key，不发送生成请求。
+- 修复公开 `/api/status` 的浏览器跨域读取；账户鉴权、生成参数、计费、画布数据和巡检功能不在本次范围内。
+- 基线：`upstream/develop` / `3a5d41bafd4e03610901114a86e72b7f15eb1705`（v1.1.15）。提交 PR 前显式 fetch 后 merge，已同步且无冲突。
+- 环境：macOS，Node.js `26.8.1`，pnpm `10.21.0`，使用已有依赖和 `7200` 开发服务。以下命令从仓库根目录运行。
+- 线上问题曾在匿名浏览器中复现：打开设置后，直连 `https://api.tu-zi.com/api/status` 因缺少跨域响应头而失败；同页面调用既有 Session 代理可得到 JSON。此结果只证明代理可用，不代表线上前端已应用修复。
 
-### 同步前验证结果（fa0105c8）
+### 同步后最终本地检查
 
 | 验证 | 结果 |
 | --- | --- |
-| `pnpm --dir packages/drawnix exec vitest run src/services/__tests__/tuzi-api-endpoints.test.ts src/services/__tests__/provider-routing.test.ts src/utils/__tests__/runtime-model-discovery.test.ts` | 3 个文件、119 项通过，其中端点模块 13 项 |
+| `pnpm --dir packages/drawnix exec vitest run src/services/__tests__/tuzi-api-endpoints.test.ts src/services/__tests__/provider-routing.test.ts src/services/__tests__/image-generation-recovery-service.test.ts src/utils/__tests__/runtime-model-discovery.test.ts` | 195 项通过、1 项上游原有失败；端点 14/14、路由 118/118、图片恢复 48/48、模型发现 15/16 |
 | `NX_DAEMON=false pnpm exec nx run drawnix:typecheck --skip-nx-cache` | 通过 |
 | `pnpm exec eslint packages/drawnix/src/services/provider-routing/tuzi-api-endpoints.ts packages/drawnix/src/services/__tests__/tuzi-api-endpoints.test.ts` | 通过 |
 | `NX_DAEMON=false pnpm exec nx run web:build-app --skip-nx-cache` | 通过 |
 | `NX_DAEMON=false pnpm exec nx run web:build-sw --skip-nx-cache` | 通过 |
-| `git diff --check` | 通过 |
-| 用 Node 直接导入修改后的端点模块，将 location 设为本地站点并实际调用 | 请求 `http://localhost:7200/__opentu_tuzi_session__/api/status`，HTTP 200 JSON，解析到 6 个可信站点 |
-| 匿名读取本地、预发布、正式站的 `/__opentu_tuzi_session__/api/status` | 三者均返回 `success: true` 和对象类型的 `data`；仅证明代理可用，不代表线上前端已应用修复 |
+| `git diff --check upstream/develop...HEAD` | 通过 |
 
-回归覆盖正式站、预发布、本地、自托管子路径、无 window 的 Worker、与上游同源和无 HTTP(S) location 的行为；验证成功缓存、失败后重试、代理 502、误返回 SPA HTML、网络失败以及内置站点回退。公开请求明确省略凭据，保留可信站点过滤。
+回归覆盖正式站、预发布、本地、自托管子路径、无 window 的 Worker、与上游同源和无 HTTP(S) location 的行为；验证成功缓存、失败后重试、代理 502、误返回 SPA HTML、网络失败以及内置站点回退。公开请求明确省略凭据，保留可信站点过滤和嵌入式配置逻辑。
 
-### 同步前已知问题和未执行项
+唯一失败是 `runtime-model-discovery.test.ts` 的“主端点浏览器 fetch 失败时会尝试 tuzi-api 候选端点获取模型”：断言期望直连 `https://api.tu-zi.com/v1/models`，现有实现使用 `http://localhost:3000/__opentu_tuzi_session__/v1/models`。在未修改的 `3a5d41ba` 导出目录重跑端点、路由和模型发现三份测试得到 137 项通过、同一项失败，确认是上游原有断言问题。本次未修改模型发现模块或该断言。
 
-- 扩大检查时，`tuzi-session-api.test.ts` 为 11 项通过、3 项失败：断言仍期待 `localhost:3100` 直连，现有实现走当前站点 Session 代理。已在临时目录中用未修改的 `HEAD` 文件复现同样的 3 个失败，属于原有测试与实现不一致，本次未修改账户模块。
-- 测试环境仍有 Node.js localStorage/IndexedDB 提示；构建有已有的动态/静态导入分块提示，均未使上述定向检查失败。
-- 配套本地测试目录 `opentu- shall` 的状态契约用例已改为匹配页面同源代理，并要求 `success: true`；仅完成 `node --check tests/network-contracts.spec.mjs` 和 `npx --no-install playwright test tests/network-contracts.spec.mjs --list`，没有运行页面测试。巡检测试保持不变。
-- 未做浏览器交互验收、真实生成、登录态验证、提交、推送或部署。发布后仍需验收“打开设置能加载 Tuzi 站点，状态请求不再出现 CORS 错误”。
-- 本地基线与正式站/预发布构建提交不同。发布时应将本次局部修复集成到对应目标版本，完成上游同步与回归后再部署，不应直接用旧本地基线覆盖线上。
+### 页面验收（2026-09-25，同一基线与修复）
 
-### 同日同步 upstream/develop 后的回归
+独立 Playwright QA harness 在匿名新上下文中执行，未使用登录凭据，也未触发生成或业务写入。三个聚焦场景全部通过：
 
-- 已快进同步 32 个提交，当前 `develop` 的 HEAD 与 `upstream/develop` 均为 `3a5d41bafd4e03610901114a86e72b7f15eb1705`（v1.1.15），本地状态接口修复无冲突恢复，尚未提交或推送。
-- 同步前 HEAD 保留在 `dev/backup-before-upstream-sync-20260925-fa0105c8`；同步前未提交修复保留在 stash `9b8557f11bf98353c0b39b3ebc55d8c7ae96728a`，恢复后未删除备份。
-- 上游端点模块新增嵌入式配置依赖。无 location 的非浏览器测试同时设定 `window` 不存在，以准确模拟运行环境；状态接口实现和上游新增的配置节点逻辑均保留。
-- 重跑上述 3 个 Vitest 文件：148 项中 147 项通过、1 项失败。端点模块 14 项、Provider 路由 118 项全部通过；模型发现 16 项中 15 项通过。
-- 剩余失败为 `runtime-model-discovery.test.ts` 的“主端点浏览器 fetch 失败时会尝试 tuzi-api 候选端点获取模型”：断言期望直连 `https://api.tu-zi.com/v1/models`，实际使用 `http://localhost:3000/__opentu_tuzi_session__/v1/models`。将未修改的 `3a5d41ba` 从 Git 导出到临时目录并重跑相同 3 个文件，得到 137 项通过、同一项失败，确认是上游原有问题，本次未改动该模块。
-- 在新基线上，`drawnix:typecheck`、定向 ESLint、`web:build-app`、`web:build-sw` 和 `git diff --check` 均通过；命令与同步前表格相同。
-- 本地 `7200` 服务仍在运行，`/version.json` 返回 v1.1.15。同步后补做了匿名页面验收：真实代理、502 回退与恢复、误返回 SPA HTML 三个场景均通过；未进行登录、生成、巡检修复或部署。
+1. 打开设置：同源状态响应为 HTTP 200 JSON、`success: true`，显示 6 个站点；重新打开时使用成功缓存。
+2. 将代理响应注入为 502：显示回退提示并保留内置 6 个站点；移除注入并重新打开后，真实状态恢复且提示消失。
+3. 将代理响应注入为 HTTP 200 HTML：拒绝无效 JSON 并回退；关闭设置后画布和模型菜单仍可用。
 
-### 同步后页面验收与影响回归
+未发现直接跨域 `/api/status` 请求、未捕获页面错误或非预期网络错误。原有 6 个页面场景中 5 个通过；另一项在“Tuzi 账户”按钮断言失败，因为独立模式有意隐藏该入口，状态 HTTP/JSON 契约在失败前已通过。外部 harness 和临时产物不随本 PR 提交。
 
-- 使用本地 v1.1.15 服务和独立 Playwright QA harness，在匿名新上下文中验证真实同源状态响应：HTTP 200 JSON、`success: true`、解析到 6 个站点；设置页成功打开并重新打开时命中成功缓存。
-- 注入代理 502 后，设置页显示回退提示并保留内置 6 个站点；移除注入后重新打开，真实状态恢复且提示消失。
-- 注入 HTTP 200 的 SPA HTML 后，响应被拒绝并回退到内置站点；关闭设置后画布和模型菜单仍可用。
-- 三个聚焦页面场景均通过；无直接跨域 `/api/status` 请求、未捕获页面错误或非预期网络错误，也未触发生成和业务写入。
-- 原有 6 个页面场景中 5 个通过；“Tuzi 账户”按钮断言失败是当前独立模式有意隐藏该入口导致的旧 harness 假设，不影响状态 HTTP/JSON 契约。另有 48 项图片生成恢复服务测试全部通过。
-- 这些页面验收仅覆盖匿名状态读取和 UI 回退，不代表登录、模型鉴权、付费生成、生产部署或巡检接口已验收。两个巡检接口仍按用户决定暂缓。
+### 限制和发布验收
+
+- 未运行全量单元测试或全仓 lint；未验收登录、模型鉴权、真实付费生成、线上部署。保留了已有的 Node.js localStorage/IndexedDB 和构建分块警告。
+- `/api/image-inspection/models` 和 `/api/image-inspection/runs` 的后端 404 暂缓处理。
+- 不需要新增依赖、数据库迁移或权限。自托管须配置上述同源代理；失败时仍可使用内置站点。回滚可撤销状态请求及对应测试的修复提交，无数据回滚步骤。
+- 发布后人工验收：打开“应用菜单 → 设置”，确认能加载 Tuzi 站点；开发者工具中状态请求走当前站点代理并返回 JSON，没有该请求的 CORS 错误。
 
 ## 提交备注模板
 
