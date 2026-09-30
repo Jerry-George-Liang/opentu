@@ -5,13 +5,20 @@ import type {
   ResolvedProviderContext,
 } from './types';
 import {
+  isTuziRequestRecoveryBaseUrl,
   isTrustedTuziApiBaseUrl,
-  isTuziRequestIdCorsBaseUrl,
+  loadTuziApiEndpointBaseUrls,
+  normalizeTuziApiEndpointUrl,
 } from './tuzi-api-endpoints';
 
 function trimTrailingSlashes(value: string): string {
   return value.replace(/\/+$/, '');
 }
+
+const TUZI_IMAGE_SUBMISSION_PATH_PATTERN =
+  /^\/(?:v\d+(?:beta\d*)?\/)?images\/(?:generations|edits)\/?$/i;
+const TUZI_IMAGE_RECOVERY_PATH_PATTERN =
+  /^\/(?:v\d+(?:beta\d*)?\/)?images\/generations\/result\/?$/i;
 
 function discardResponseBody(response: Response): void {
   if (!response.body || response.bodyUsed) {
@@ -343,6 +350,40 @@ export async function readProviderResponseText(
   return readProviderResponseBody(response);
 }
 
+async function shouldRetryTuziResponse(
+  context: ResolvedProviderContext,
+  request: ProviderTransportRequest,
+  response: Response
+): Promise<boolean> {
+  return (
+    isRecoverableTuziImageSubmission(context, request) &&
+    response.headers.get('X-Tuzi-Request-Accepted')?.trim().toLowerCase() ===
+      'false' &&
+    response.headers.get('X-Tuzi-Request-Retryable')?.trim().toLowerCase() ===
+      'true'
+  );
+}
+
+async function getTuziFallbackBaseUrls(baseUrl: string): Promise<string[]> {
+  if (!isTrustedTuziApiBaseUrl(baseUrl)) {
+    return [];
+  }
+
+  const currentOrigin = normalizeTuziApiEndpointUrl(baseUrl);
+  const versionSuffix = /\/v\d+(?:beta\d*)?\/?$/i.test(baseUrl.trim())
+    ? baseUrl.trim().match(/(\/v\d+(?:beta\d*)?)\/?$/i)?.[1] || ''
+    : '';
+  const candidates = await loadTuziApiEndpointBaseUrls();
+  return [...new Set(candidates)]
+    .filter(
+      (candidate) =>
+        isTrustedTuziApiBaseUrl(candidate) &&
+        normalizeTuziApiEndpointUrl(candidate) !== currentOrigin
+    )
+    .slice(0, 1)
+    .map((candidate) => `${candidate}${versionSuffix}`);
+}
+
 function buildQueryString(
   query?: Record<string, string | number | boolean | null | undefined>
 ): string {
@@ -502,7 +543,7 @@ function isTrustedTuziRequestTarget(
   context: ResolvedProviderContext,
   request: Pick<ProviderTransportRequest, 'path' | 'baseUrlStrategy'>
 ): boolean {
-  if (!isTrustedTuziApiBaseUrl(context.baseUrl)) {
+  if (!isTuziRequestRecoveryBaseUrl(context.baseUrl)) {
     return false;
   }
 
@@ -513,7 +554,8 @@ function isTrustedTuziRequestTarget(
   const requestUrl = joinUrl(resolvedBaseUrl, request.path);
 
   return (
-    !/^https?:\/\//i.test(requestUrl) || isTrustedTuziApiBaseUrl(requestUrl)
+    !/^https?:\/\//i.test(requestUrl) ||
+    isTuziRequestRecoveryBaseUrl(requestUrl)
   );
 }
 
@@ -562,41 +604,53 @@ function isTuziRequestIdSubmission(
   );
 }
 
-function isRecoverableTuziImageRequestIdSubmission(
+function isRecoverableTuziImageSubmission(
   context: ResolvedProviderContext,
-  request: ProviderTransportRequest,
-  prepared: PreparedProviderTransportRequest
+  request: ProviderTransportRequest
 ): boolean {
   const requestPath = request.path.split(/[?#]/, 1)[0] || '';
-  const attachedRequestId = Object.entries(prepared.headers).find(
-    ([name]) => name.toLowerCase() === 'x-request-id'
-  )?.[1];
   return (
     request.allowImageSubmissionOutcomeRecovery !== false &&
     isTuziRequestIdSubmission(context, request) &&
-    attachedRequestId === request.requestId &&
     isPostRequestMethod(request.method) &&
-    /\/images\/(?:generations|edits)\/?$/i.test(requestPath)
+    TUZI_IMAGE_SUBMISSION_PATH_PATTERN.test(requestPath)
   );
 }
 
-/**
- * X-Request-Id 只在明确放行该请求头的可信 Tuzi 节点上启用。
- */
+function isTuziImageRecoveryQuery(
+  context: ResolvedProviderContext,
+  request: ProviderTransportRequest
+): boolean {
+  const requestPath = request.path.split(/[?#]/, 1)[0] || '';
+  return Boolean(
+    request.requestId &&
+      (request.method || 'GET').toUpperCase() === 'GET' &&
+      isTrustedTuziRequestTarget(context, request) &&
+      TUZI_IMAGE_RECOVERY_PATH_PATTERN.test(requestPath)
+  );
+}
+
+function allowsNetworkFallback(request: ProviderTransportRequest): boolean {
+  // 通用传输层不跨节点重放；恢复服务会在原节点失败后自行查询共享节点。
+  void request;
+  return false;
+}
+
+/** X-Request-Id 仅用于可信 Tuzi 的同步图片 POST 与对应结果查询。 */
 export function canAttachProviderRequestIdHeader(
   context: ResolvedProviderContext,
-  request: Pick<ProviderTransportRequest, 'path' | 'method' | 'baseUrlStrategy'>
+  request: Pick<
+    ProviderTransportRequest,
+    | 'path'
+    | 'method'
+    | 'requestId'
+    | 'baseUrlStrategy'
+    | 'allowImageSubmissionOutcomeRecovery'
+  >
 ): boolean {
-  const resolvedBaseUrl = applyBaseUrlStrategy(
-    context.baseUrl,
-    request.baseUrlStrategy
-  );
-  const requestUrl = joinUrl(resolvedBaseUrl, request.path);
   return (
-    isPostRequestMethod(request.method) &&
-    isTrustedTuziRequestTarget(context, request) &&
-    (!/^https?:\/\//i.test(requestUrl) ||
-      isTuziRequestIdCorsBaseUrl(requestUrl))
+    isRecoverableTuziImageSubmission(context, request) ||
+    isTuziImageRecoveryQuery(context, request)
   );
 }
 
@@ -633,7 +687,6 @@ export class ProviderTransport {
       canAttachProviderRequestIdHeader(context, request),
       Boolean(request.requestId) || isReadOnlyRequestMethod(request.method)
     );
-
     return {
       url,
       headers: finalHeaders,
@@ -659,14 +712,17 @@ export class ProviderTransport {
       ...request,
       signal: timeoutControl.signal,
     });
-    const recoverableImageSubmission =
-      isRecoverableTuziImageRequestIdSubmission(context, request, prepared);
+    const recoverableImageSubmission = isRecoverableTuziImageSubmission(
+      context,
+      request
+    );
     const fetcher = request.fetcher || fetch;
     let responseCleanupDeferred = false;
-    const returnResponse = (
+    const returnResponse = async (
       response: Response,
       allowImageSubmissionOutcomeUnknown = false
-    ): Response => {
+    ): Promise<Response> => {
+      await request.onResponse?.(response);
       if (
         !request.controlledResponseBody &&
         !allowImageSubmissionOutcomeUnknown
@@ -684,11 +740,65 @@ export class ProviderTransport {
       responseCleanupDeferred = true;
       return response;
     };
+    const shouldContinueFallback = (error: unknown): boolean =>
+      isAmbiguousNetworkError(error) && allowsNetworkFallback(request);
+    const sendFallbackRequests = async (
+      initialResponse?: Response
+    ): Promise<Response | null> => {
+      const fallbackBaseUrls = await getTuziFallbackBaseUrls(context.baseUrl);
+      let retryResponse = initialResponse;
+      for (const fallbackBaseUrl of fallbackBaseUrls) {
+        try {
+          const fallbackPrepared = this.prepareRequest(
+            { ...context, baseUrl: fallbackBaseUrl },
+            { ...request, signal: timeoutControl.signal }
+          );
+          const fallbackResponse = await fetcher(
+            fallbackPrepared.url,
+            fallbackPrepared.init
+          );
+          if (
+            !(await shouldRetryTuziResponse(context, request, fallbackResponse))
+          ) {
+            if (retryResponse) {
+              discardResponseBody(retryResponse);
+            }
+            return fallbackResponse;
+          }
+          if (retryResponse) {
+            discardResponseBody(retryResponse);
+          }
+          retryResponse = fallbackResponse;
+        } catch (fallbackError) {
+          if (
+            timeoutControl.didTimeout() ||
+            !shouldContinueFallback(fallbackError)
+          ) {
+            if (retryResponse) {
+              discardResponseBody(retryResponse);
+            }
+            throw fallbackError;
+          }
+        }
+      }
+
+      return retryResponse || null;
+    };
+
     try {
       const response = await fetcher(prepared.url, prepared.init);
-      return returnResponse(
-        response,
-        recoverableImageSubmission && response.ok
+      if (!(await shouldRetryTuziResponse(context, request, response))) {
+        return await returnResponse(
+          response,
+          recoverableImageSubmission && response.ok
+        );
+      }
+
+      const fallbackResponse = await sendFallbackRequests(response);
+      const finalResponse = fallbackResponse || response;
+      return await returnResponse(
+        finalResponse,
+        recoverableImageSubmission && finalResponse.ok
       );
     } catch (error) {
       if (timeoutControl.didTimeout()) {
@@ -700,6 +810,15 @@ export class ProviderTransport {
         isAmbiguousNetworkError(error)
       ) {
         throw new ImageSubmissionOutcomeUnknownError(error);
+      }
+      if (shouldContinueFallback(error)) {
+        const fallbackResponse = await sendFallbackRequests();
+        if (fallbackResponse) {
+          return await returnResponse(
+            fallbackResponse,
+            recoverableImageSubmission && fallbackResponse.ok
+          );
+        }
       }
       throw error;
     } finally {

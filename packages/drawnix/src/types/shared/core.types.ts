@@ -148,9 +148,25 @@ export interface GenerationAssetMetadata {
   characterPrompt?: string;
 }
 
+/** Durable identity used by the document batch scheduler. */
+export interface DocumentBatchTaskMetadata {
+  scopeId: string;
+  batchId: string;
+  workItemId: string;
+  attemptId: string;
+  epoch: number;
+  dispatchOwner: 'document-batch';
+  /** Set by the scheduler once the irreversible submission ticket is consumed. */
+  dispatchTicket?: string;
+}
+
 export interface GenerationParams {
+  /** Durable workflow owner. Generic queue scans must never submit these tasks. */
+  workflow?: { scopeId: string; targetId: string; attemptId: string; routeIdentity?: string };
   /** Text prompt describing the desired content */
   prompt: string;
+  /** Batch scheduler metadata; contains no credentials or secrets. */
+  documentBatch?: DocumentBatchTaskMetadata;
   /** Lightweight canvas sources explicitly mentioned for this request */
   canvasAssociations?: CanvasAssociationRef[];
   /** Lightweight asset-library metadata for generated media */
@@ -399,6 +415,26 @@ export interface TaskError {
   details?: TaskErrorDetails;
 }
 
+export type ImageRecoveryStatus =
+  | 'idle'
+  | 'checking'
+  | 'processing_or_not_found'
+  | 'succeeded'
+  | 'failed';
+
+/** Image URLs recovered from the provider after the original response was lost. */
+export interface ImageRecoveryInfo {
+  /** Provider-side request ID returned by X-Oneapi-Request-Id, used as fallback. */
+  requestId?: string;
+  /** Full lookup endpoint using the stable local task ID sent as X-Request-Id. */
+  url?: string;
+  status: ImageRecoveryStatus;
+  /** Original provider URLs. Keep these separate from locally cached task results. */
+  urls?: string[];
+  message?: string;
+  checkedAt: number;
+}
+
 // ============================================================================
 // Task Interface
 // ============================================================================
@@ -438,6 +474,8 @@ export interface Task {
   invocationRoute?: TaskInvocationRouteSnapshot;
   /** Current execution phase for recovery support */
   executionPhase?: TaskExecutionPhase;
+  /** Provider image recovery state and original recovered URLs. */
+  imageRecovery?: ImageRecoveryInfo;
   /** Whether the task result has been saved to the media library */
   savedToLibrary?: boolean;
   /** Whether the task result has been inserted to canvas */

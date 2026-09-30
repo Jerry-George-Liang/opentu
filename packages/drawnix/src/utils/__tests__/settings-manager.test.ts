@@ -739,15 +739,29 @@ describe('settings-manager', () => {
     });
   });
 
-  it('uses an embedded managed provider when the legacy route has no key', async () => {
+  it('uses the remembered bridge-managed group for Tuzi routes', async () => {
     mockSettingsManagerDeps();
-    vi.stubEnv('VITE_TUZI_EMBEDDED_MODE', 'true');
-    vi.stubEnv('VITE_TUZI_API_BASE_URL', 'http://localhost:3100');
+    vi.doMock('../../services/tuzi-embedded-config', () => ({
+      isTuziEmbeddedMode: () => true,
+      tuziEmbeddedConfig: { apiBaseUrl: 'http://localhost:3100' },
+    }));
+    vi.doMock('../../services/tuzi-token-auth', () => ({
+      getTuziSystemUserId: () => '40832',
+      getTuziSystemToken: () => 'system-token',
+    }));
+    vi.doMock('../../services/tuzi-provider-selection', () => ({
+      resolveTuziActiveProviderGroup: () => 'vip',
+    }));
+    localStorage.setItem('opentu.tuzi.systemUserId.v1', '40832');
+    localStorage.setItem(
+      'opentu.tuzi.active-provider-group.v1',
+      JSON.stringify({ '40832': 'vip' })
+    );
     localStorage.setItem(
       DRAWNIX_SETTINGS_KEY,
       JSON.stringify({
         gemini: {
-          apiKey: '',
+          apiKey: 'old-manual-key',
           baseUrl: 'http://localhost:3100/v1',
           imageModelName: 'gpt-image-1',
         },
@@ -757,7 +771,7 @@ describe('settings-manager', () => {
             name: 'default 分组',
             providerType: 'openai-compatible',
             baseUrl: 'http://localhost:3100/v1',
-            apiKey: '',
+            apiKey: 'old-manual-key',
             authType: 'bearer',
             enabled: true,
             capabilities: {},
@@ -773,16 +787,69 @@ describe('settings-manager', () => {
             capabilities: {},
             pricingGroup: 'default',
           },
+          {
+            id: 'tuzi-managed-vip',
+            name: 'vip',
+            providerType: 'openai-compatible',
+            baseUrl: 'http://localhost:3100/v1',
+            apiKey: 'sk-vip',
+            authType: 'bearer',
+            enabled: true,
+            capabilities: {},
+            pricingGroup: 'vip',
+          },
         ],
       })
     );
 
     const { settingsManager } = await import('../settings-manager');
     expect(settingsManager.resolveInvocationRoute('image')).toMatchObject({
-      profileId: 'tuzi-managed-default',
-      apiKey: 'sk-managed',
+      profileId: 'tuzi-managed-vip',
+      apiKey: 'sk-vip',
     });
     expect(settingsManager.hasInvocationRouteCredentials('image')).toBe(true);
+    expect(
+      settingsManager.resolveInvocationRoute('image', {
+        profileId: 'legacy-default',
+        modelId: 'gpt-image-1',
+      }).apiKey
+    ).toBe('');
+    const { setTuziProviderVerification, resetTuziProviderVerification } =
+      await import('../../services/tuzi-provider-reuse-state');
+    setTuziProviderVerification(
+      settingsManager
+        .getSetting('providerProfiles')
+        .filter((profile) => profile.id === 'legacy-default'),
+      [
+        {
+          id: 'legacy-default',
+          token_id: 1,
+          token_name: 'Old token',
+          groups: ['default'],
+          usable: true,
+          model_limits_enabled: true,
+          models: ['gpt-image-1'],
+          ip_restricted: false,
+          quota_limited: false,
+          count_limited: false,
+        },
+      ]
+    );
+    expect(
+      settingsManager.resolveInvocationRoute('image', {
+        profileId: 'legacy-default',
+        modelId: 'gpt-image-1',
+      }).apiKey
+    ).toBe('old-manual-key');
+    expect(
+      settingsManager.resolveInvocationRoute('image', {
+        profileId: 'legacy-default',
+        modelId: 'forbidden-model',
+      }).apiKey
+    ).toBe('old-manual-key');
+    resetTuziProviderVerification();
+    await settingsManager.updateSetting('providerProfiles', []);
+    expect(settingsManager.resolveInvocationRoute('image').apiKey).toBe('');
   });
 
   it('preserves provider catalog manual bindings after reload', async () => {

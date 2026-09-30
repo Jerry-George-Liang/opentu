@@ -24,11 +24,18 @@ import {
 } from '../utils/validation-utils';
 import {
   taskStorageWriter,
+  isDocumentBatchTaskScopeCurrent,
+  registerDocumentBatchTaskGuard,
   type SWTask,
 } from './media-executor/task-storage-writer';
 import { taskStorageReader } from './task-storage-reader';
 import { executorFactory, waitForTaskCompletion } from './media-executor';
-import { hasInvocationRouteCredentials } from '../utils/settings-manager';
+import {
+  createModelRef,
+  hasInvocationRouteCredentials,
+  LEGACY_DEFAULT_PROVIDER_PROFILE_ID,
+  resolveInvocationRoute,
+} from '../utils/settings-manager';
 import { DEFAULT_AUDIO_MODEL_ID } from '../constants/model-config';
 import { analytics } from '../utils/umami-analytics';
 import {
@@ -46,9 +53,13 @@ import { buildInlineDataPart } from '../utils/gemini-api/message-utils';
 import { unifiedCacheService } from './unified-cache-service';
 import { buildGenerateContentConfig } from './analysis-core';
 import {
+  assertTaskInvocationRouteAvailable,
   createTaskInvocationRouteSnapshotFromTask,
   mergeTaskInvocationRoute,
+  resolveLegacyTaskInvocationRouteModel,
+  resolveTaskInvocationRouteModel,
 } from './task-invocation-route';
+import type { DocumentBatchTaskMetadata } from '../types/shared/core.types';
 import { callGoogleGenerateContentWithLog } from '../utils/gemini-api/logged-calls';
 import { executeVideoAnalysis } from './video-analysis-service';
 import {
@@ -81,6 +92,7 @@ import {
   isImageRequestRecoveryCandidate,
 } from './image-generation-recovery-service';
 import { isImageSubmissionOutcomeUnknownError } from './provider-routing';
+import { SubmissionPersistenceError } from './submission-persistence';
 
 const VIDEO_ANALYZER_SIMULATED_DURATION_MS = 10 * 60 * 1000;
 const VIDEO_ANALYZER_SIMULATED_INTERVAL_MS = 5000;
@@ -132,10 +144,69 @@ const STORAGE_SYNC_FIELDS = [
   'startedAt',
   'remoteId',
   'invocationRoute',
+  'imageRecovery',
   'insertedToCanvas',
   'executionPhase',
   'savedToLibrary',
 ] as const satisfies readonly (keyof Task)[];
+
+function normalizeTaskParamsModelIdentity(
+  params: GenerationParams,
+  routeModelId?: string | null
+): GenerationParams {
+  const modelId =
+    routeModelId?.trim() || params.modelRef?.modelId?.trim() || '';
+  if (!modelId || params.model === modelId) {
+    return params;
+  }
+
+  return {
+    ...params,
+    model: modelId,
+  };
+}
+
+function isLegacyImageAlias(modelId?: string | null): boolean {
+  const normalized = modelId?.trim().toLowerCase();
+  return normalized === 'image2' || normalized === 'image-2';
+}
+
+function shouldRepairLegacyImageAlias(task: Task): boolean {
+  if (task.type !== TaskType.IMAGE) {
+    return false;
+  }
+
+  if (!isLegacyImageAlias(task.params.model)) {
+    return false;
+  }
+
+  const errorMessage = task.error?.message || '';
+  const originalError =
+    typeof task.error?.details?.originalError === 'string'
+      ? task.error.details.originalError
+      : '';
+  return /无可用渠道|distributor/i.test(`${errorMessage} ${originalError}`);
+}
+
+function shouldRefreshUnavailableImageRoute(task: Task): boolean {
+  if (task.type !== TaskType.IMAGE) {
+    return false;
+  }
+
+  const routeProfileId =
+    task.invocationRoute?.modelRef?.profileId ||
+    task.invocationRoute?.providerProfileId;
+  if (routeProfileId && routeProfileId !== LEGACY_DEFAULT_PROVIDER_PROFILE_ID) {
+    return false;
+  }
+
+  const errorMessage = task.error?.message || '';
+  const originalError =
+    typeof task.error?.details?.originalError === 'string'
+      ? task.error.details.originalError
+      : '';
+  return /无可用渠道|distributor/i.test(`${errorMessage} ${originalError}`);
+}
 
 function stableStringify(value: unknown): string | undefined {
   try {
@@ -472,6 +543,7 @@ class TaskQueueService {
       progress: task.progress,
       remoteId: task.remoteId,
       invocationRoute: task.invocationRoute,
+      imageRecovery: task.imageRecovery,
       executionPhase: task.executionPhase,
       savedToLibrary: task.savedToLibrary,
       insertedToCanvas: task.insertedToCanvas,
@@ -556,6 +628,7 @@ class TaskQueueService {
     const task = this.tasks.get(taskId);
     return (
       !task ||
+      (task?.params.documentBatch && !isDocumentBatchTaskScopeCurrent(task)) ||
       task.status === TaskStatus.CANCELLED ||
       this.blockedTaskIds.has(taskId) ||
       this.recentlyDeletedTaskIds.has(taskId) ||
@@ -787,6 +860,9 @@ class TaskQueueService {
    * This is called automatically after task creation
    */
   private async executeTask(task: Task): Promise<void> {
+    if (task.params.workflow) return;
+    if (task.params.documentBatch &&
+        (!task.params.documentBatch.dispatchTicket || !isDocumentBatchTaskScopeCurrent(task))) return;
     const submissionRequestId =
       task.type === TaskType.IMAGE
         ? getImageSubmissionRequestId(task)
@@ -839,12 +915,8 @@ class TaskQueueService {
           : task.type === TaskType.CHAT
           ? 'text'
           : 'image';
-      if (
-        !hasInvocationRouteCredentials(
-          routeType,
-          task.params.modelRef || task.params.model
-        )
-      ) {
+      const routeModel = resolveTaskInvocationRouteModel(task);
+      if (!hasInvocationRouteCredentials(routeType, routeModel)) {
         console.warn(
           '[TaskQueueService] No API configuration, cannot execute task'
         );
@@ -877,8 +949,14 @@ class TaskQueueService {
       }
 
       if (task.type === TaskType.AUDIO) {
-        const requestedModel = task.params.model as string | undefined;
-        const requestedModelRef = task.params.modelRef || null;
+        const audioRouteModel = resolveTaskInvocationRouteModel(task);
+        const requestedModelRef =
+          typeof audioRouteModel === 'string' ? null : audioRouteModel;
+        const requestedModel =
+          requestedModelRef?.modelId ||
+          (typeof audioRouteModel === 'string'
+            ? audioRouteModel
+            : (task.params.model as string | undefined));
         const adapter = resolveAdapterForInvocation(
           'audio',
           requestedModel || DEFAULT_AUDIO_MODEL_ID,
@@ -1123,12 +1201,20 @@ class TaskQueueService {
         onSubmissionAttempt: async (
           invocationRoute?: Task['invocationRoute']
         ) => {
+          if (task.params.documentBatch) {
+            assertTaskInvocationRouteAvailable('image', task, { requireSelectedBindingMatch: true });
+            if (!isCurrentExecutionAttempt()) throw new Error('Batch scope changed before submission');
+          }
           if (submissionRequestId) {
             await this.markImageSubmissionAttempted(
               task.id,
               submissionRequestId,
               invocationRoute
             );
+          }
+          if (task.params.documentBatch) {
+            assertTaskInvocationRouteAvailable('image', task, { requireSelectedBindingMatch: true });
+            if (!isCurrentExecutionAttempt()) throw new Error('Batch scope changed before submission');
           }
           if (
             this.shouldSkipExecutionWriteback(
@@ -1172,6 +1258,14 @@ class TaskQueueService {
       // Execute based on task type
       switch (task.type) {
         case TaskType.IMAGE: {
+          const imageRouteModel = resolveTaskInvocationRouteModel(task);
+          const imageModelRef =
+            typeof imageRouteModel === 'string' ? null : imageRouteModel;
+          const imageModel =
+            imageModelRef?.modelId ||
+            (typeof imageRouteModel === 'string'
+              ? imageRouteModel
+              : task.params.model);
           // 从 params.params 中提取额外参数，并补齐新图像契约字段
           const extraParams = {
             ...(((task.params as any).params || {}) as Record<string, unknown>),
@@ -1197,8 +1291,8 @@ class TaskQueueService {
               taskId: task.id,
               requestId: submissionRequestId,
               prompt: task.params.prompt,
-              model: task.params.model,
-              modelRef: task.params.modelRef || null,
+              model: imageModel,
+              modelRef: imageModelRef,
               size: task.params.size,
               resolution: task.params.resolution as
                 | '1k'
@@ -1253,6 +1347,14 @@ class TaskQueueService {
           break;
         }
         case TaskType.VIDEO: {
+          const videoRouteModel = resolveTaskInvocationRouteModel(task);
+          const videoModelRef =
+            typeof videoRouteModel === 'string' ? null : videoRouteModel;
+          const videoModel =
+            videoModelRef?.modelId ||
+            (typeof videoRouteModel === 'string'
+              ? videoRouteModel
+              : task.params.model);
           // 从 uploadedImages（UI 层传入的 UploadedVideoImage[]）中提取 URL
           const uploaded = task.params.uploadedImages as
             | Array<{ url?: string }>
@@ -1276,8 +1378,8 @@ class TaskQueueService {
             {
               taskId: task.id,
               prompt: task.params.prompt,
-              model: task.params.model,
-              modelRef: task.params.modelRef || null,
+              model: videoModel,
+              modelRef: videoModelRef,
               duration: (
                 task.params.duration ?? task.params.seconds
               )?.toString(),
@@ -1359,10 +1461,21 @@ class TaskQueueService {
           }
           await executor.generateText(
             {
+              ...(() => {
+                const textRouteModel = resolveTaskInvocationRouteModel(task);
+                const textModelRef =
+                  typeof textRouteModel === 'string' ? null : textRouteModel;
+                return {
+                  model:
+                    textModelRef?.modelId ||
+                    (typeof textRouteModel === 'string'
+                      ? textRouteModel
+                      : task.params.model),
+                  modelRef: textModelRef,
+                };
+              })(),
               taskId: task.id,
               prompt: task.params.prompt,
-              model: task.params.model,
-              modelRef: task.params.modelRef || null,
               referenceImages: task.params.referenceImages as
                 | string[]
                 | undefined,
@@ -1416,6 +1529,10 @@ class TaskQueueService {
               ...localTask,
               status: updatedTask.status as TaskStatus,
               progress: updatedTask.progress,
+              // Preserve submission metadata written directly by the executor.
+              remoteId: updatedTask.remoteId ?? localTask.remoteId,
+              invocationRoute:
+                updatedTask.invocationRoute ?? localTask.invocationRoute,
               updatedAt: Date.now(),
               ...(updatedTask.result && { result: updatedTask.result }),
               ...(updatedTask.error && { error: updatedTask.error }),
@@ -1449,6 +1566,9 @@ class TaskQueueService {
         const finalTask: Task = {
           ...localTask,
           status: result.task.status as TaskStatus,
+          remoteId: result.task.remoteId ?? localTask.remoteId,
+          invocationRoute:
+            result.task.invocationRoute ?? localTask.invocationRoute,
           result: result.task.result,
           error: result.task.error,
           completedAt: result.task.completedAt,
@@ -1476,6 +1596,20 @@ class TaskQueueService {
       const localTask = this.tasks.get(task.id);
       if (localTask) {
         const now = Date.now();
+        if (error instanceof SubmissionPersistenceError) {
+          const acceptedTask: Task = {
+            ...localTask,
+            remoteId: error.remoteId,
+            status: TaskStatus.PROCESSING,
+            executionPhase: TaskExecutionPhase.POLLING,
+            updatedAt: now,
+            error: { code: error.code, message: error.message },
+          };
+          this.tasks.set(task.id, acceptedTask);
+          this.persistTask(acceptedTask);
+          this.emitEvent('taskUpdated', acceptedTask);
+          return;
+        }
         if (task.type === TaskType.IMAGE && submissionRequestId) {
           if (isImageSubmissionOutcomeUnknownError(error)) {
             shouldNotifyRecoveryAfterExecution =
@@ -1486,7 +1620,7 @@ class TaskQueueService {
             return;
           }
           await this.failImageAttempt(task.id, submissionRequestId, {
-            code: 'EXECUTION_ERROR',
+            code: error.code || 'EXECUTION_ERROR',
             message: error.message || 'Task execution failed',
           });
           return;
@@ -1496,7 +1630,7 @@ class TaskQueueService {
           ...localTask,
           status: TaskStatus.FAILED,
           error: {
-            code: 'EXECUTION_ERROR',
+            code: error.code || 'EXECUTION_ERROR',
             message: error.message || 'Task execution failed',
           },
           updatedAt: now,
@@ -2250,6 +2384,7 @@ class TaskQueueService {
    * @throws Error if validation fails
    */
   createTask(params: GenerationParams, type: TaskType): Task {
+    if (params.documentBatch) throw new Error('Document batch tasks require the deferred task bridge');
     // Validate parameters
     const validation = validateGenerationParams(params, type);
     if (!validation.valid) {
@@ -2257,8 +2392,10 @@ class TaskQueueService {
     }
 
     // Sanitize parameters
-    const sanitizedParams = normalizeGenerationParamsKnowledgeContext(
-      sanitizeGenerationParams(params)
+    const sanitizedParams = normalizeTaskParamsModelIdentity(
+      normalizeGenerationParamsKnowledgeContext(
+        sanitizeGenerationParams(params)
+      )
     );
 
     // Create new task - starts as PROCESSING since it will be executed immediately
@@ -2320,6 +2457,117 @@ class TaskQueueService {
 
     // console.log(`[TaskQueueService] Created task ${task.id} (${type})`);
     return task;
+  }
+
+  /** Prepare a batch image task without starting execution or making HTTP calls. */
+  async prepareDocumentBatchTask(
+    taskId: string,
+    params: GenerationParams,
+    metadata: DocumentBatchTaskMetadata
+  ): Promise<Task> {
+    if (metadata.dispatchOwner !== 'document-batch') {
+      throw new Error('Invalid document batch dispatch owner');
+    }
+    const validation = validateGenerationParams(params, TaskType.IMAGE);
+    if (!validation.valid) {
+      throw new Error(`Invalid parameters: ${validation.errors.join(', ')}`);
+    }
+    const sanitized = normalizeTaskParamsModelIdentity(
+      normalizeGenerationParamsKnowledgeContext(sanitizeGenerationParams({
+        ...params,
+        autoInsertToCanvas: false,
+        documentBatch: metadata,
+      }))
+    );
+    const taskParams = createImageSubmissionParams(sanitized, taskId);
+    const routeTask = {
+      id: taskId,
+      type: TaskType.IMAGE,
+      status: TaskStatus.PENDING,
+      params: taskParams,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    } as Task;
+    const route = createTaskInvocationRouteSnapshotFromTask(routeTask);
+    const stored = await taskStorageWriter.prepareDocumentBatchTask(
+      taskId,
+      taskParams as SWTask['params'],
+      metadata,
+      route
+    );
+    const task = stored as unknown as Task;
+    this.tasks.set(task.id, task);
+    this.renewTaskExecutionToken(task.id);
+    this.emitEvent('taskCreated', task);
+    return task;
+  }
+
+  /** Consume a scheduler ticket and then run the existing image executor. */
+  async startPreparedDocumentBatchTask(options: {
+    taskId: string;
+    metadata: DocumentBatchTaskMetadata;
+    claimTicket: () => string | false | Promise<string | false>;
+    scopeGuard: () => boolean;
+  }): Promise<'started' | 'already-started' | 'rejected'> {
+    const { taskId, metadata, claimTicket, scopeGuard } = options;
+    if (!scopeGuard()) return 'rejected';
+    const current = await taskStorageWriter.getTask(taskId);
+    const currentMeta = current?.params.documentBatch as
+      | DocumentBatchTaskMetadata
+      | undefined;
+    if (!current || current.type !== 'image' || !currentMeta ||
+        currentMeta.scopeId !== metadata.scopeId || currentMeta.batchId !== metadata.batchId ||
+        currentMeta.workItemId !== metadata.workItemId || currentMeta.attemptId !== metadata.attemptId ||
+        currentMeta.epoch !== metadata.epoch) return 'rejected';
+    if (current.status === 'processing' || current.status === 'completed') {
+      return 'already-started';
+    }
+    if (current.status !== 'pending') return 'rejected';
+    if (current.syncedFromRemote || !current.invocationRoute?.providerProfileId) return 'rejected';
+    assertTaskInvocationRouteAvailable('image', current as unknown as Task, {
+      requireSelectedBindingMatch: true,
+    });
+    const ticket = await claimTicket();
+    if (!ticket || !scopeGuard()) return 'rejected';
+    const claimed = await taskStorageWriter.claimDocumentBatchTask(
+      taskId,
+      metadata,
+      ticket
+    );
+    if (!claimed || !scopeGuard()) return 'rejected';
+    registerDocumentBatchTaskGuard(taskId, metadata, scopeGuard);
+    const task = this.tasks.get(taskId) || ({
+      id: taskId,
+      type: TaskType.IMAGE,
+      status: TaskStatus.PROCESSING,
+      params: claimed.params as GenerationParams,
+      createdAt: claimed.createdAt,
+      updatedAt: claimed.updatedAt,
+      startedAt: claimed.startedAt,
+      invocationRoute: claimed.invocationRoute,
+      executionPhase: TaskExecutionPhase.SUBMITTING,
+    } as Task);
+    const startedTask: Task = {
+      ...task,
+      status: TaskStatus.PROCESSING,
+      params: claimed.params as GenerationParams,
+      startedAt: claimed.startedAt,
+      updatedAt: claimed.updatedAt,
+      invocationRoute: claimed.invocationRoute || task.invocationRoute,
+      executionPhase: TaskExecutionPhase.SUBMITTING,
+    };
+    this.tasks.set(taskId, startedTask);
+    this.renewTaskExecutionToken(taskId);
+    this.emitEvent('taskUpdated', startedTask);
+    void this.executeTask(startedTask).catch((error) =>
+      console.error('[TaskQueueService] Document batch task execution failed:', error)
+    );
+    return 'started';
+  }
+
+  async getPersistedTask(taskId: string): Promise<Task | null> {
+    const task = await taskStorageWriter.getTask(taskId);
+    return task ? (task as unknown as Task) : null;
   }
 
   /**
@@ -2532,7 +2780,9 @@ class TaskQueueService {
    * @returns Array of all tasks
    */
   getAllTasks(): Task[] {
-    return Array.from(this.tasks.values());
+    return Array.from(this.tasks.values()).filter(
+      (task) => (!task.params.documentBatch || isDocumentBatchTaskScopeCurrent(task)) && !task.params.workflow
+    );
   }
 
   /**
@@ -2689,6 +2939,7 @@ class TaskQueueService {
    */
   retryTask(taskId: string, options: { allowCompleted?: boolean } = {}): void {
     const task = this.tasks.get(taskId);
+    if (task?.params.documentBatch || task?.params.workflow || task?.error?.code === 'SUBMISSION_PERSISTENCE_FAILED') return;
     if (!task) {
       console.warn(`[TaskQueueService] Task ${taskId} not found`);
       return;
@@ -2719,6 +2970,71 @@ class TaskQueueService {
         `[TaskQueueService] Task ${taskId} is not failed, cancelled, or explicitly retryable, cannot retry`
       );
       return;
+    }
+
+    const existingRouteModelRef = createModelRef(
+      task.invocationRoute?.modelRef?.profileId ||
+        task.invocationRoute?.providerProfileId,
+      task.invocationRoute?.modelRef?.modelId || task.invocationRoute?.modelId
+    );
+    let nextParams = normalizeTaskParamsModelIdentity(
+      task.params,
+      existingRouteModelRef?.modelId
+    );
+    if (existingRouteModelRef) {
+      nextParams = {
+        ...nextParams,
+        modelRef: existingRouteModelRef,
+      };
+    }
+    let nextInvocationRoute = task.invocationRoute;
+    if (
+      task.type === TaskType.IMAGE &&
+      (!existingRouteModelRef?.profileId ||
+        shouldRefreshUnavailableImageRoute(task))
+    ) {
+      const repairedRouteModel = resolveLegacyTaskInvocationRouteModel(
+        'image',
+        task
+      );
+      const repairedModelRef =
+        typeof repairedRouteModel === 'string' ? null : repairedRouteModel;
+      if (
+        repairedModelRef?.profileId &&
+        repairedModelRef.modelId &&
+        hasInvocationRouteCredentials('image', repairedModelRef)
+      ) {
+        nextParams = {
+          ...nextParams,
+          model: repairedModelRef.modelId,
+          modelRef: repairedModelRef,
+        };
+        nextInvocationRoute = createTaskInvocationRouteSnapshotFromTask({
+          ...task,
+          params: nextParams,
+        });
+      } else if (shouldRepairLegacyImageAlias(task)) {
+        const activeRoute = resolveInvocationRoute('image');
+        const activeModelRef = createModelRef(
+          activeRoute.profileId,
+          activeRoute.modelId
+        );
+        if (
+          activeModelRef?.profileId &&
+          activeModelRef.modelId &&
+          hasInvocationRouteCredentials('image', activeModelRef)
+        ) {
+          nextParams = {
+            ...nextParams,
+            model: activeModelRef.modelId,
+            modelRef: activeModelRef,
+          };
+          nextInvocationRoute = createTaskInvocationRouteSnapshotFromTask({
+            ...task,
+            params: nextParams,
+          });
+        }
+      }
     }
 
     // Reset task for retry - set to PROCESSING for immediate execution
@@ -2767,10 +3083,10 @@ class TaskQueueService {
       : undefined;
     const retryParams =
       task.type === TaskType.IMAGE
-        ? createImageSubmissionParams(task.params, generateTaskId())
+        ? createImageSubmissionParams(nextParams, generateTaskId())
         : pptExplainerState
         ? {
-            ...task.params,
+            ...nextParams,
             pptExplainer: {
               ...pptExplainerState,
               stage: pptExplainerRetryStage,
@@ -2784,9 +3100,10 @@ class TaskQueueService {
                 : {}),
             },
           }
-        : task.params;
+        : nextParams;
     this.updateTaskStatus(taskId, TaskStatus.PROCESSING, {
       params: retryParams,
+      invocationRoute: nextInvocationRoute,
       error: undefined,
       result: undefined,
       startedAt: now, // Set new start time
@@ -2887,7 +3204,6 @@ class TaskQueueService {
   async clearAllTasks(): Promise<void> {
     taskStorageWriter.pauseWrites();
     const tasks = this.getAllTasks();
-
     for (const task of tasks) {
       this.blockedTaskIds.add(task.id);
       this.abortTaskExecution(task.id);
@@ -3556,6 +3872,8 @@ class TaskQueueService {
     // 收集终态任务，按 updatedAt 升序（最旧的优先归档）
     const terminalTasks: Task[] = [];
     for (const task of this.tasks.values()) {
+      // Batch history has its own retention policy and result projection.
+      if (task.params.documentBatch) continue;
       if (
         task.status === TaskStatus.COMPLETED ||
         task.status === TaskStatus.FAILED ||

@@ -159,7 +159,6 @@ describe('Media Executor Module', () => {
           cacheMediaFromBlob: vi.fn(async () => {}),
         },
       }));
-
       vi.doMock('../../utils/settings-manager', async (importOriginal) => {
         const actual = await importOriginal<
           typeof import('../../utils/settings-manager')
@@ -206,6 +205,7 @@ describe('Media Executor Module', () => {
       vi.doMock('../task-invocation-route', () => ({
         createTaskInvocationRouteSnapshot,
       }));
+      const completeTask = vi.fn(async () => undefined);
       vi.doMock('../media-executor/llm-api-logger', () => ({
         startLLMApiLog: vi.fn(() => 'log-id'),
         completeLLMApiLog: vi.fn(),
@@ -214,7 +214,8 @@ describe('Media Executor Module', () => {
       vi.doMock('../media-executor/task-storage-writer', () => ({
         taskStorageWriter: {
           updateStatus: vi.fn(async () => {}),
-          completeTask: vi.fn(async () => {}),
+          updateImageRecovery: vi.fn(async () => {}),
+          completeTask,
           failTask: vi.fn(async () => {}),
         },
       }));
@@ -228,8 +229,33 @@ describe('Media Executor Module', () => {
           cacheMediaFromBlob: vi.fn(async () => {}),
         },
       }));
+      vi.doMock('../media-executor/fallback-utils', async (importOriginal) => {
+        const actual = await importOriginal<
+          typeof import('../media-executor/fallback-utils')
+        >();
+        return {
+          ...actual,
+          cacheRemoteUrls: vi.fn(
+            async (
+              urls: string[],
+              _taskId: string,
+              _mediaType: 'image' | 'video' | 'audio',
+              _format: string,
+              options?: { onCacheWarning?: (warning: unknown) => void }
+            ) => {
+              options?.onCacheWarning?.({
+                status: 'failed',
+                reasonCode: 'cache_missing',
+                message: 'cache unavailable',
+                detectedAt: Date.now(),
+              });
+              return urls;
+            }
+          ),
+        };
+      });
       vi.doMock('../../utils/api-auth-error-event', () => ({
-        isAuthError: vi.fn(() => false),
+        classifyApiCredentialError: vi.fn(() => null),
         dispatchApiAuthError: vi.fn(),
       }));
       vi.doMock('../model-adapters', async (importOriginal) => {
@@ -266,11 +292,14 @@ describe('Media Executor Module', () => {
           return {
             url: 'https://example.com/out.png',
             format: 'png',
+            width: 1024,
+            height: 1536,
           };
         },
       };
       const generateSpy = vi.spyOn(adapter, 'generateImage');
       const onSubmissionAttempt = vi.fn();
+      const controller = new AbortController();
 
       await executeImageViaAdapter(
         'task-1',
@@ -283,7 +312,7 @@ describe('Media Executor Module', () => {
           maskImage: 'data:image/png;base64,mask',
           outputFormat: 'png',
         },
-        { onSubmissionAttempt }
+        { onSubmissionAttempt, signal: controller.signal }
       );
 
       expect(modelAdapters.getAdapterContextFromSettings).toHaveBeenCalledWith(
@@ -299,6 +328,7 @@ describe('Media Executor Module', () => {
       expect(generateSpy).toHaveBeenCalledWith(
         expect.objectContaining({
           requestId: 'task-1',
+          signal: controller.signal,
         }),
         expect.objectContaining({
           generationMode: 'image_edit',
@@ -313,6 +343,25 @@ describe('Media Executor Module', () => {
         { bindingId: 'tuzi-image-edit' }
       );
       expect(onSubmissionAttempt).toHaveBeenCalledWith(actualInvocationRoute);
+      expect(completeTask).toHaveBeenCalledWith(
+        'task-1',
+        {
+          url: 'https://example.com/out.png',
+          urls: undefined,
+          format: 'png',
+          size: 0,
+          width: 1024,
+          height: 1536,
+          cacheWarning: expect.objectContaining({
+            status: 'failed',
+            reasonCode: 'cache_missing',
+          }),
+        },
+        'task-1',
+        expect.objectContaining({
+          shouldUpdate: expect.any(Function),
+        })
+      );
     }, 15000);
 
     it('passes remote references through Tuzi JSON image requests without browser fetch', async () => {
@@ -324,6 +373,7 @@ describe('Media Executor Module', () => {
       }));
       vi.doMock('../media-executor/task-storage-writer', () => ({
         taskStorageWriter: {
+          updateImageRecovery: vi.fn(async () => {}),
           completeTask: vi.fn(async () => true),
           failTask: vi.fn(async () => {}),
         },
@@ -436,6 +486,7 @@ describe('Media Executor Module', () => {
       vi.doMock('../media-executor/task-storage-writer', () => ({
         taskStorageWriter: {
           updateStatus: vi.fn(async () => {}),
+          updateImageRecovery: vi.fn(async () => {}),
           completeTask: vi.fn(async () => {}),
           failTask: vi.fn(async () => {}),
         },
@@ -633,6 +684,7 @@ describe('Media Executor Module', () => {
       vi.doMock('../media-executor/task-storage-writer', () => ({
         taskStorageWriter: {
           updateStatus: vi.fn(async () => {}),
+          updateImageRecovery: vi.fn(async () => {}),
           completeTask: vi.fn(async () => {}),
           failTask: vi.fn(async () => {}),
         },
@@ -724,6 +776,102 @@ describe('Media Executor Module', () => {
         }),
         undefined,
         expect.any(Number)
+      );
+    }, 15000);
+
+    it('adds the stable task ID header to the direct image fallback request', async () => {
+      const send = vi.fn(async () =>
+        Response.json({
+          data: [{ url: 'data:image/png;base64,aW1hZ2U=' }],
+        })
+      );
+
+      vi.doMock('../media-executor/llm-api-logger', () => ({
+        startLLMApiLog: vi.fn(() => 'log-id'),
+        completeLLMApiLog: vi.fn(),
+        failLLMApiLog: vi.fn(),
+      }));
+      vi.doMock('../media-executor/task-storage-writer', () => ({
+        taskStorageWriter: {
+          updateStatus: vi.fn(async () => {}),
+          updateImageRecovery: vi.fn(async () => {}),
+          completeTask: vi.fn(async () => {}),
+          failTask: vi.fn(async () => {}),
+        },
+      }));
+      vi.doMock('../unified-cache-service', () => ({
+        unifiedCacheService: {
+          getImageForAI: vi.fn(),
+          isCached: vi.fn(async () => false),
+          cacheMediaFromBlob: vi.fn(async () => {}),
+        },
+      }));
+      vi.doMock('../../utils/api-auth-error-event', () => ({
+        classifyApiCredentialError: vi.fn(() => null),
+        dispatchApiAuthError: vi.fn(),
+      }));
+      vi.doMock('../media-executor/fallback-utils', async (importOriginal) => {
+        const actual = await importOriginal<
+          typeof import('../media-executor/fallback-utils')
+        >();
+        return {
+          ...actual,
+          cacheRemoteUrls: vi.fn(async (urls: string[]) => urls),
+        };
+      });
+      vi.doMock('../../utils/settings-manager', async (importOriginal) => {
+        const actual = await importOriginal<
+          typeof import('../../utils/settings-manager')
+        >();
+        return {
+          ...actual,
+          resolveInvocationRoute: vi.fn(() => ({
+            routeType: 'image',
+            modelId: 'legacy-image-model',
+            profileId: 'legacy-provider',
+            profileName: 'Legacy Provider',
+            providerType: 'openai-compatible',
+            baseUrl: 'https://api.example.com/v1',
+            apiKey: 'secret',
+            source: 'preset',
+          })),
+        };
+      });
+      vi.doMock('../provider-routing', async (importOriginal) => {
+        const actual = await importOriginal<
+          typeof import('../provider-routing')
+        >();
+        return {
+          ...actual,
+          providerTransport: { send },
+          resolveInvocationPlanFromRoute: vi.fn(() => null),
+        };
+      });
+      vi.doMock('../model-adapters', () => ({
+        resolveAdapterForInvocation: vi.fn(() => null),
+        GPT_IMAGE_EDIT_REQUEST_SCHEMAS: ['openai.image.gpt-edit-form'],
+      }));
+
+      const { FallbackMediaExecutor } = await import(
+        '../media-executor/fallback-executor'
+      );
+      const controller = new AbortController();
+      await new FallbackMediaExecutor().generateImage(
+        {
+          taskId: 'task-direct-image-1',
+          prompt: '生成一只兔子',
+          model: 'legacy-image-model',
+        },
+        { signal: controller.signal }
+      );
+
+      expect(send).toHaveBeenCalledWith(
+        expect.any(Object),
+        expect.objectContaining({
+          path: '/images/generations',
+          requestId: 'task-direct-image-1',
+          signal: controller.signal,
+        })
       );
     }, 15000);
 
@@ -853,6 +1001,12 @@ describe('Media Executor Module', () => {
       const result = await executor.generateText({
         taskId: 'task-text-1',
         prompt: 'hello',
+        messages: [
+          { role: 'system', content: 'Keep the full conversation.' },
+          { role: 'user', content: 'previous question' },
+          { role: 'assistant', content: 'previous answer' },
+          { role: 'user', content: 'hello' },
+        ],
         model: 'custom-chat-model',
         modelRef: {
           profileId: 'provider-manual',
@@ -883,6 +1037,9 @@ describe('Media Executor Module', () => {
             model: 'custom-chat-model',
             prompt: 'hello',
             messages: [
+              { role: 'system', content: [{ type: 'text', text: 'Keep the full conversation.' }] },
+              { role: 'user', content: [{ type: 'text', text: 'previous question' }] },
+              { role: 'assistant', content: [{ type: 'text', text: 'previous answer' }] },
               {
                 role: 'user',
                 content: [
@@ -1430,7 +1587,7 @@ describe('Media Executor Module', () => {
         'video',
         'mp4',
         undefined,
-        { resultVisibility: 'internal' }
+        expect.objectContaining({ resultVisibility: 'internal' })
       );
       expect(onTaskUpdate).toHaveBeenCalledWith(
         task.id,
@@ -1617,9 +1774,12 @@ describe('Media Executor Module', () => {
       expect((executor as any).pollingTasks.size).toBe(0);
     }, 15000);
 
-    it('passes video adapter progress through fallback adapter routes', async () => {
-      const updateRemoteId = vi.fn(async () => {});
+    it.each([false, true])('awaits video submission persistence (storage failure: %s)', async (storageFailure) => {
+      const updateRemoteId = vi.fn(async () => {
+        if (storageFailure) throw new Error('storage unavailable');
+      });
       const completeTask = vi.fn(async () => {});
+      const failTask = vi.fn(async () => {});
       const onProgress = vi.fn();
 
       vi.doMock('../media-executor/llm-api-logger', () => ({
@@ -1631,7 +1791,7 @@ describe('Media Executor Module', () => {
         taskStorageWriter: {
           updateRemoteId,
           completeTask,
-          failTask: vi.fn(async () => {}),
+          failTask,
         },
       }));
       vi.doMock('../unified-cache-service', () => ({
@@ -1663,6 +1823,7 @@ describe('Media Executor Module', () => {
       const { executeVideoViaAdapter } = await import(
         '../media-executor/fallback-adapter-routes'
       );
+      const { notifyTaskSubmitted } = await import('../submission-persistence');
       const adapter: VideoModelAdapter = {
         id: 'happyhorse-adapter',
         label: 'HappyHorse',
@@ -1672,10 +1833,10 @@ describe('Media Executor Module', () => {
             | ((progress: number, status?: string) => void)
             | undefined;
           const handleSubmitted = request.params?.onSubmitted as
-            | ((videoId: string) => void)
+            | ((videoId: string) => void | Promise<void>)
             | undefined;
 
-          handleSubmitted?.('video-task-1');
+          await notifyTaskSubmitted('video-task-1', handleSubmitted);
           handleProgress?.(30, 'in_progress');
 
           return {
@@ -1685,7 +1846,7 @@ describe('Media Executor Module', () => {
         },
       };
 
-      await executeVideoViaAdapter(
+      const pending = executeVideoViaAdapter(
         'task-1',
         adapter,
         {
@@ -1694,6 +1855,17 @@ describe('Media Executor Module', () => {
         },
         { onProgress }
       );
+
+      if (storageFailure) {
+        await expect(pending).rejects.toMatchObject({
+          code: 'SUBMISSION_PERSISTENCE_FAILED', remoteId: 'video-task-1', retryable: false,
+        });
+        expect(updateRemoteId).toHaveBeenCalledOnce();
+        expect(completeTask).not.toHaveBeenCalled();
+        expect(failTask).not.toHaveBeenCalled();
+        return;
+      }
+      await pending;
 
       expect(updateRemoteId).toHaveBeenCalledWith(
         'task-1',

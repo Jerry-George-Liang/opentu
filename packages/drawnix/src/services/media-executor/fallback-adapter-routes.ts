@@ -10,8 +10,10 @@ import type {
   GenerationParams,
   TaskResultVisibility,
 } from '../../types/shared/core.types';
+import type { CacheWarning } from '../../types/cache-warning.types';
 import type { ExecutionOptions } from './types';
 import { taskStorageWriter } from './task-storage-writer';
+import { SubmissionPersistenceError } from '../submission-persistence';
 import { createTaskInvocationRouteSnapshot } from '../task-invocation-route';
 import {
   startLLMApiLog,
@@ -35,6 +37,11 @@ import {
   cacheRemoteUrls,
 } from './fallback-utils';
 import { isImageSubmissionOutcomeUnknownError } from '../provider-routing';
+import {
+  attachImageRecoveryRequestId,
+  buildImageRecoveryUrl,
+  readImageRecoveryRequestId,
+} from '../image-generation-recovery-metadata';
 
 type ImageGenerationMode = 'text_to_image' | 'image_to_image' | 'image_edit';
 type ImageInputFidelity = 'high' | 'low';
@@ -141,17 +148,21 @@ export async function executeImageViaAdapter(
   const adapterContext = getAdapterContextFromSettings(
     'image',
     params.modelRef || params.model,
-    { preferredRequestSchema }
+    {
+      preferredRequestSchema,
+    }
   );
   const invocationRoute = createTaskInvocationRouteSnapshot(
     'image',
     params.modelRef || params.model,
     { bindingId: adapterContext.binding?.id }
   );
+  const requestModel =
+    adapterContext.binding?.modelId || params.modelRef?.modelId || params.model;
 
   const logId = startLLMApiLog({
     endpoint: `adapter:${adapter.id}`,
-    model: params.model,
+    model: requestModel,
     taskType: 'image',
     prompt: params.prompt,
     hasReferenceImages:
@@ -162,6 +173,8 @@ export async function executeImageViaAdapter(
     ),
     taskId,
   });
+  let recoveryRequestId: string | undefined;
+  let recoveryUrl: string | undefined;
 
   try {
     let processedImages: string[] | undefined;
@@ -188,10 +201,27 @@ export async function executeImageViaAdapter(
           await options?.onSubmissionAttempt?.(invocationRoute);
         },
         signal: options?.signal,
+        onResponse: (response) => {
+          recoveryRequestId =
+            readImageRecoveryRequestId(response) || recoveryRequestId;
+          recoveryUrl =
+            buildImageRecoveryUrl(
+              adapterContext.baseUrl,
+              submissionRequestId
+            ) || recoveryUrl;
+          if (recoveryRequestId) {
+            void taskStorageWriter.updateImageRecovery(taskId, {
+              requestId: recoveryRequestId,
+              url: recoveryUrl,
+              status: 'idle',
+              checkedAt: Date.now(),
+            });
+          }
+        },
       },
       {
         prompt: params.prompt,
-        model: params.model,
+        model: requestModel,
         modelRef: params.modelRef || null,
         size: params.size,
         generationMode:
@@ -230,6 +260,7 @@ export async function executeImageViaAdapter(
     // 缓存远程签名 URL 到本地，避免 Referer 校验导致 403
     const fmt = result.format || 'png';
     const allUrls = result.urls?.length ? result.urls : [result.url];
+    let cacheWarning: CacheWarning | undefined;
     const cachedUrls = await cacheRemoteUrls(allUrls, taskId, 'image', fmt, {
       forceRemoteCache: true,
       returnLocalCacheUrl: true,
@@ -238,9 +269,22 @@ export async function executeImageViaAdapter(
         ? { ...params.assetMetadata }
         : undefined,
       resultVisibility: params.resultVisibility,
+      onCacheWarning: (warning) => {
+        cacheWarning ||= warning;
+      },
     });
     assertCurrentExecutionAttempt(options);
     const cachedPrimary = cachedUrls[0];
+
+    await taskStorageWriter.updateImageRecovery(taskId, {
+      requestId: recoveryRequestId || submissionRequestId,
+      url:
+        recoveryUrl ||
+        buildImageRecoveryUrl(adapterContext.baseUrl, submissionRequestId),
+      status: 'succeeded',
+      urls: allUrls,
+      checkedAt: Date.now(),
+    });
 
     const completed = await taskStorageWriter.completeTask(
       taskId,
@@ -251,6 +295,7 @@ export async function executeImageViaAdapter(
         size: 0,
         width: result.width,
         height: result.height,
+        ...(cacheWarning ? { cacheWarning } : {}),
       },
       submissionRequestId,
       createStorageWriteGuard(options)
@@ -261,8 +306,10 @@ export async function executeImageViaAdapter(
       throw staleAttemptError;
     }
   } catch (error: any) {
+    attachImageRecoveryRequestId(error, recoveryRequestId);
     const duration = Date.now() - logStartTime;
     const errorMessage = error.message || 'Image generation failed (adapter)';
+    if (error instanceof SubmissionPersistenceError) throw error;
 
     if (options?.isCurrentAttempt?.() === false) {
       failLLMApiLog(logId, { duration, errorMessage });
@@ -285,7 +332,7 @@ export async function executeImageViaAdapter(
     await taskStorageWriter.failTask(
       taskId,
       {
-        code: 'IMAGE_GENERATION_ERROR',
+        code: error.code || 'IMAGE_GENERATION_ERROR',
         message: errorMessage,
       },
       submissionRequestId,
@@ -320,7 +367,6 @@ export async function executeVideoViaAdapter(
   startTime?: number
 ): Promise<void> {
   const logStartTime = startTime || Date.now();
-  let remoteIdWrite: Promise<unknown> | undefined;
 
   const refUrls =
     (params.referenceImages && params.referenceImages.length > 0
@@ -381,14 +427,14 @@ export async function executeVideoViaAdapter(
               phase: safeProgress <= 10 ? 'submitting' : 'polling',
             });
           },
-          onSubmitted: (videoId: string) => {
+          onSubmitted: async (videoId: string) => {
             if (
               options?.signal?.aborted ||
               options?.isCurrentAttempt?.() === false
             ) {
               return;
             }
-            remoteIdWrite = taskStorageWriter.updateRemoteId(
+            await taskStorageWriter.updateRemoteId(
               taskId,
               videoId,
               createTaskInvocationRouteSnapshot(
@@ -402,8 +448,6 @@ export async function executeVideoViaAdapter(
         },
       }
     );
-    assertCurrentExecutionAttempt(options);
-    await remoteIdWrite;
     assertCurrentExecutionAttempt(options);
 
     const duration = Date.now() - logStartTime;
@@ -420,6 +464,7 @@ export async function executeVideoViaAdapter(
 
     // 缓存远程签名 URL 到本地
     const videoFmt = result.format || 'mp4';
+    let cacheWarning: CacheWarning | undefined;
     const cachedVideoUrl = await cacheRemoteUrl(
       result.url,
       taskId,
@@ -428,7 +473,12 @@ export async function executeVideoViaAdapter(
       undefined,
       {
         signal: options?.signal,
+        forceRemoteCache: true,
+        returnLocalCacheUrl: true,
         resultVisibility: params.resultVisibility,
+        onCacheWarning: (warning) => {
+          cacheWarning ||= warning;
+        },
       }
     );
     assertCurrentExecutionAttempt(options);
@@ -440,6 +490,7 @@ export async function executeVideoViaAdapter(
         format: videoFmt,
         size: 0,
         duration: result.duration,
+        ...(cacheWarning ? { cacheWarning } : {}),
       },
       undefined,
       createStorageWriteGuard(options)
@@ -447,6 +498,7 @@ export async function executeVideoViaAdapter(
   } catch (error: any) {
     const duration = Date.now() - logStartTime;
     const errorMessage = error.message || 'Video generation failed (adapter)';
+    if (error instanceof SubmissionPersistenceError) throw error;
 
     if (options?.signal?.aborted || options?.isCurrentAttempt?.() === false) {
       failLLMApiLog(logId, { duration, errorMessage });

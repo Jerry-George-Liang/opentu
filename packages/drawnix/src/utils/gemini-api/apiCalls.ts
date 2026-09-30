@@ -500,12 +500,14 @@ export async function callGoogleGenerateContentRaw(
   config: GeminiConfig,
   messages: GeminiMessage[],
   options: {
+    fetcher?: typeof fetch;
     stream: boolean;
     onChunk?: (content: string) => void;
     signal?: AbortSignal;
     generationConfig?: Record<string, unknown>;
     requestId?: string;
     onSubmissionAttempt?: () => void | Promise<void>;
+    onResponse?: (response: Response) => void | Promise<void>;
   } = { stream: false }
 ): Promise<GeminiResponse> {
   const startTime = Date.now();
@@ -552,7 +554,9 @@ export async function callGoogleGenerateContentRaw(
       query: options.stream ? { alt: 'sse' } : undefined,
       body: JSON.stringify(requestBody),
       signal: timeoutControl.signal,
+      fetcher: options.fetcher,
       controlledResponseBody: true,
+      onResponse: options.onResponse,
     });
 
     if (!response.ok) {

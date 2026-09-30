@@ -13,6 +13,7 @@ import { characterAPIService } from '../services/character-api-service';
 import { characterStorageService } from '../services/character-storage-service';
 import { unifiedCacheService } from '../services/unified-cache-service';
 import { Task, TaskStatus, TaskType } from '../types/task.types';
+import type { CacheWarning } from '../types/cache-warning.types';
 import { CharacterStatus } from '../types/character.types';
 import { isResumableAsyncImageTask, isTaskTimeout } from '../utils/task-utils';
 import { AI_GENERATION_CONCURRENCY_LIMIT } from '../constants/TASK_CONSTANTS';
@@ -39,6 +40,17 @@ function inferImageFormat(url: string): string {
   const pathname = url.split(/[?#]/, 1)[0] || '';
   const extension = pathname.match(/\.([a-z0-9]+)$/i)?.[1]?.toLowerCase();
   return !extension || extension === 'bin' ? 'png' : extension;
+}
+
+function createCacheUnavailableWarning(): CacheWarning {
+  return {
+    status: 'failed',
+    reasonCode: 'unknown',
+    message:
+      '该资源未能缓存到浏览器，原始链接可能会过期，请尽快下载保存。',
+    detectedAt: Date.now(),
+    expiresHint: '原始链接可能带有效期',
+  };
 }
 
 function isRecoveryWritebackWatchdogAbort(signal: AbortSignal): boolean {
@@ -316,6 +328,7 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
       const requestId = getImageSubmissionRequestId(task);
       const startedAt = task.startedAt ?? task.createdAt;
       let resolvedUrls: string[] | null = null;
+      let cacheWarning: CacheWarning | undefined;
       const startResult = imageGenerationRecoveryService.start(task, {
         onSucceeded: async (result, signal) => {
           if (!isActive || signal.aborted) return;
@@ -340,6 +353,9 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
                     : undefined,
                   resultVisibility: task.params.resultVisibility,
                   signal,
+                  onCacheWarning: (warning) => {
+                    cacheWarning ||= warning;
+                  },
                 }),
                 signal
               );
@@ -348,6 +364,7 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
                 return;
               }
               resolvedUrls = result.urls;
+              cacheWarning ||= createCacheUnavailableWarning();
               console.warn(
                 `[TaskExecutor] Failed to cache recovered image task ${task.id}, using remote URL:`,
                 error
@@ -372,6 +389,7 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
               format,
               size: 0,
               resultKind: 'image',
+              ...(cacheWarning ? { cacheWarning } : {}),
             }
           );
           if (shouldStopWriteback()) {
@@ -538,9 +556,9 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
       } catch (error: any) {
         if (!isCurrentTaskExecution(taskId, executionToken)) return;
 
-        const errorCode = error.httpStatus
+        const errorCode = error.code || (error.httpStatus
           ? `HTTP_${error.httpStatus}`
-          : error.name || 'ERROR';
+          : error.name || 'ERROR');
         const errorMessage = getFriendlyErrorMessage(error);
         const originalErrorInfo =
           error.fullResponse ||
@@ -588,10 +606,50 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
 
         if (!isCurrentTaskExecution(taskId, executionToken)) return;
 
+        const format = result.format || inferImageFormat(result.url);
+        const originalUrls = result.urls?.length ? result.urls : [result.url];
+        let resolvedUrls = originalUrls;
+        let cacheWarning: CacheWarning | undefined;
+        try {
+          resolvedUrls = await cacheRemoteUrls(
+            originalUrls,
+            taskId,
+            'image',
+            format,
+            {
+              forceRemoteCache: true,
+              returnLocalCacheUrl: true,
+              cacheKey: requestId,
+              extraMetadata: task.params.assetMetadata
+                ? { ...task.params.assetMetadata }
+                : undefined,
+              resultVisibility: task.params.resultVisibility,
+              onCacheWarning: (warning) => {
+                cacheWarning ||= warning;
+              },
+            }
+          );
+        } catch (error) {
+          cacheWarning ||= createCacheUnavailableWarning();
+          console.warn(
+            `[TaskExecutor] Failed to cache resumed async image task ${taskId}, using remote URL:`,
+            error
+          );
+        }
+
+        if (!isCurrentTaskExecution(taskId, executionToken)) return;
+        const resolvedResult = {
+          ...result,
+          url: resolvedUrls[0] || result.url,
+          urls: resolvedUrls.length > 1 ? resolvedUrls : undefined,
+          format,
+          ...(cacheWarning ? { cacheWarning } : {}),
+        };
+
         const completed = await legacyTaskQueueService.completeImageAttempt(
           taskId,
           requestId,
-          result
+          resolvedResult
         );
         if (!completed || !isCurrentTaskExecution(taskId, executionToken))
           return;
@@ -605,15 +663,18 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
           return;
         }
 
-        if (result.url) {
+        if (resolvedResult.url) {
           try {
-            await unifiedCacheService.registerImageMetadata(result.url, {
-              taskId: task.id,
-              model: task.params.model,
-              prompt: task.params.prompt,
-              params: task.params,
-              resultVisibility: task.params.resultVisibility,
-            });
+            await unifiedCacheService.registerImageMetadata(
+              resolvedResult.url,
+              {
+                taskId: task.id,
+                model: task.params.model,
+                prompt: task.params.prompt,
+                params: task.params,
+                resultVisibility: task.params.resultVisibility,
+              }
+            );
           } catch (error) {
             console.error(
               `[TaskExecutor] Failed to register metadata for resumed async image task ${taskId}:`,
@@ -624,9 +685,9 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
       } catch (error: any) {
         if (!isCurrentTaskExecution(taskId, executionToken)) return;
 
-        const errorCode = error.httpStatus
+        const errorCode = error.code || (error.httpStatus
           ? `HTTP_${error.httpStatus}`
-          : error.name || 'ERROR';
+          : error.name || 'ERROR');
         const errorMessage = getFriendlyErrorMessage(error);
         const originalErrorInfo =
           error.fullResponse ||
@@ -721,9 +782,9 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
         const updatedTask = legacyTaskQueueService.getTask(taskId);
         if (!updatedTask) return;
 
-        const errorCode = error.httpStatus
+        const errorCode = error.code || (error.httpStatus
           ? `HTTP_${error.httpStatus}`
-          : error.name || 'ERROR';
+          : error.name || 'ERROR');
         const errorMessage = getFriendlyErrorMessage(error);
         const originalErrorInfo =
           error.fullResponse ||
@@ -750,6 +811,11 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
 
     // Function to execute a single task
     const executeTask = async (task: Task, expectedToken?: symbol) => {
+      // Document batch tasks are started exclusively through the deferred bridge;
+      // generic recovery/queue scans must never consume their pending ticket.
+      if (task.params.documentBatch || task.params.workflow) {
+        return;
+      }
       if (expectedToken) {
         if (
           !legacyTaskQueueService.isTaskExecutionTokenCurrent(
@@ -924,9 +990,9 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
         if (!updatedTask) return;
 
         // Extract error details - 优先使用 API 返回的详细错误信息
-        const errorCode = error.httpStatus
+        const errorCode = error.code || (error.httpStatus
           ? `HTTP_${error.httpStatus}`
-          : error.name || 'ERROR';
+          : error.name || 'ERROR');
         const errorMessage = getFriendlyErrorMessage(error);
         // 如果有完整响应，使用它；否则使用 API 错误体或错误消息
         const originalErrorInfo =
@@ -977,6 +1043,7 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
 
     // 将任务加入执行队列（带并发控制）
     const enqueueTask = (task: Task) => {
+      if (task.params.documentBatch || task.params.workflow) return;
       const token = legacyTaskQueueService.getTaskExecutionToken(task.id);
       if (
         !token ||
@@ -1038,7 +1105,7 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
           task.status === TaskStatus.PROCESSING
       );
       const recoverableImageRequestTasks = tasks.filter(
-        isImageRequestRecoveryCandidate
+        task => !task.params.documentBatch && !task.params.workflow && isImageRequestRecoveryCandidate(task)
       );
 
       console.warn(
@@ -1046,7 +1113,9 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
       );
 
       pendingTasks.forEach((task) => {
-        enqueueTask(task);
+        if (!task.params.documentBatch && !task.params.workflow) {
+          enqueueTask(task);
+        }
       });
       resumableTasks.forEach((task) => {
         enqueueTask(task);
@@ -1067,7 +1136,7 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
       const tasks = legacyTaskQueueService.getAllTasks();
       const processingTasks = tasks.filter(
         (task) =>
-          task.status === TaskStatus.PROCESSING && !isPptExplainerTask(task)
+          task.status === TaskStatus.PROCESSING && !task.params.documentBatch && !task.params.workflow && !isPptExplainerTask(task)
       );
 
       processingTasks.forEach((task) => {
@@ -1146,6 +1215,7 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
 
         if (event.type === 'taskCreated' || event.type === 'taskUpdated') {
           const task = event.task;
+          if (task.params.workflow) return;
 
           if (event.type === 'taskCreated') {
             processPendingTasks();
@@ -1178,7 +1248,9 @@ export function useTaskExecutor(isTaskStorageReady = true): void {
 
           // Execute pending tasks
           if (task.status === TaskStatus.PENDING) {
-            enqueueTask(task);
+          if (!task.params.documentBatch && !task.params.workflow) {
+              enqueueTask(task);
+            }
           } else if (
             !executingTasksRef.current.has(task.id) &&
             task.status === TaskStatus.PROCESSING &&
