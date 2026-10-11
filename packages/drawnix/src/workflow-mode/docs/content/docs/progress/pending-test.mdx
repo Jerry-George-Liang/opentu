@@ -5,6 +5,7 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- Suno 音乐：默认版本为 `chirp-v6`，版本菜单提供 v6、v6 Wild、v6 Mini。模型仍为 `suno_music`，使用 `/suno/submit/music` 和 `/suno/fetch/{taskId}`；请验证三个版本的生成与结果回填，真实供应商和页面验收尚未执行。
 - Nano Banana classification: discovery infers image capability without image tags. Reloading saved `gemini-nano-banana-2.1` entries incorrectly marked text corrects them to image while retaining model settings; text selectors exclude them. Remote text category metadata cannot override this built-in image model. Automated checks and isolated Chrome reload verification passed. Existing Agent TODO items are unchanged.
 
 - Nano Banana 2.1 browser checks: independent Chrome verified model selection and parameter controls at 1440x900. At 390x844, the parameter menu stays inside the viewport and Thinking updates the summary. Actual canvas generation/editing and workflow generation/editing succeeded. Reference imports block generation until complete; the deferred concurrent-upload regression passes. Real mobile devices remain pending acceptance.
