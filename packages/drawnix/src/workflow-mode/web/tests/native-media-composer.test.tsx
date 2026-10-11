@@ -14,8 +14,8 @@ describe.each(['prompt', 'config'] as const)('%s media arriving while typing', k
         const reference = (url: string): CanvasResourceReference => ({ id: 'image', nodeId: 'image', kind: 'image', label: 'Image 1', title: 'Reference', previewUrl: url, active: true });
         const input = (url: string) => ({ nodeId: 'image', title: 'Reference', type: 'image', image: { dataUrl: url, storageKey: 'image:one' } } as NodeGenerationInput);
         const component = (url: string) => kind === 'prompt'
-            ? <CanvasPromptChipInput value="Image 1 tail" references={[reference(url)]} onChange={() => {}} />
-            : <CanvasConfigComposer nodeId="config" nodes={[]} value="@[node:image] tail" inputs={[input(url)]} onChange={() => {}} onClose={() => {}} />;
+            ? <CanvasPromptChipInput value="Image 1 tail" references={[reference(url)]} onChange={vi.fn()} />
+            : <CanvasConfigComposer nodeId="config" nodes={[]} value="@[node:image] tail" inputs={[input(url)]} onChange={vi.fn()} onClose={vi.fn()} />;
         const view = render(component('blob:loading'));
         const editor = view.container.querySelector<HTMLElement>('[contenteditable="true"]')!;
         const chip = editor.querySelector<HTMLElement>('[data-ref-label], [data-reference-node-id]')!;

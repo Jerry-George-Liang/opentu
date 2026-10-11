@@ -1,5 +1,35 @@
 # 浏览器打开体验与内存优化：QA / 维护说明
 
+## PR 前最终验证
+
+提交目标为官方 `ljquan/opentu` 的 `develop`，当前分支 `dev/browser-startup-memory`。已提交实现 `ad95668c` 后显式 fetch/merge，官方仍为 `df1715ab`（1.1.25），无新增冲突。此前同步时两个中英文 pending-test 文档冲突已同时保留双方记录；图片工作台自动合并保留上游参考图导入保护和本地按需媒体读取。下文各批状态与数量为历史记录，本节为最终交付依据。
+
+- 主应用受影响的 13 个测试文件：114 项通过。
+- 工作流完整配置：47 个文件，515 项通过、1 项失败。失败为 GPT Image `background=transparent` 参数校验，在隔离的官方 `df1715ab` 原始代码、同一依赖中重跑同一测试可复现；不是合并或本次媒体优化引入。隔离测试初次缺子项目依赖，补齐软链接后才获得有效复现证据。
+- ReactBoard 9 项、Service Worker 31 项通过。新增媒体编辑器测试的 3 个空回调已改为 `vi.fn()`，对应 2 项测试和 lint 复查通过。
+- Drawnix/ReactBoard 类型检查、完整 Web 构建（Web 类型检查、应用与 SW）、`validate-startup-bundle.js`、OpenSpec 严格校验、差异检查通过。
+- `check:cycles` 返回失败：2 组运行时循环；`check:cycles:types` 返回失败：3 组含类型循环。两者输出均与隔离的官方原版完全一致，没有新增循环。
+- 完整变更文件 lint 未全通过。3 个新增测试空回调错误已修复；剩余为既有代码错误与 Nx 模块边界限制。隔离官方 lint 的 Nx 规则因无缓存项目图而跳过，不能按总数认定全部规则通过。保留的既有告警/错误不夹带无关重构。
+
+命令及环境：macOS、现有 Node/pnpm 依赖，主应用/工作流测试命令使用 `NODE_OPTIONS=--no-experimental-webstorage`；模拟媒体、IndexedDB 和 API，不执行付费生成或读取真实账户。
+
+```sh
+cd packages/drawnix
+NODE_OPTIONS=--no-experimental-webstorage npx vitest run --config vitest.config.ts src/components/retry-image.test.tsx src/contexts/AssetContext.result-visibility.test.tsx src/hooks/use-canvas-image-preview.test.tsx src/hooks/use-media-visibility.test.tsx src/plugins/components/image.loading.test.tsx src/plugins/components/video.test.tsx src/services/__tests__/workspace-cache.test.ts src/services/__tests__/tuzi-session-provider-sync.test.ts src/services/__tests__/tuzi-managed-route-gate.test.ts src/services/__tests__/tuzi-token-auth.test.ts src/stores/asset-map-store.test.ts src/utils/__tests__/common.test.ts src/hooks/__tests__/useTaskStorage-image-recovery.test.ts
+cd ../..
+NODE_OPTIONS=--no-experimental-webstorage npx vitest run --config packages/drawnix/src/workflow-mode/web/vitest.config.ts
+npx vitest run --config packages/react-board/vite.config.ts
+npx vitest run apps/web/src/sw/*.spec.ts
+npx tsc -p packages/drawnix/tsconfig.lib.json --noEmit
+npx tsc -p packages/react-board/tsconfig.lib.json --noEmit
+NX_DAEMON=false npx nx run web:build
+node scripts/validate-startup-bundle.js
+node scripts/check-cycles.js
+node scripts/check-cycles.js --include-types
+```
+
+QA 与维护说明已按现有目录更新，DOC 内容合并在本文件及本地 Tuzi 入口说明；CHANGELOG、TODO 与中英文待验收已同步。无新增依赖、数据库 schema、配置变量或迁移步骤；需按原版本流程部署完整应用与匹配 SW，回滚保留已有原媒体，不清空用户存储。旧字符串 URL 兼容池未完全迁移、资产分页未实施、完整升级/离线/回滚验收未完成，因此提交草稿 PR，不将局部合成样本或本地测试作为生产发布通过证据。远程 CI/部署状态以 PR 实际检查为准。
+
 ## 审查修复后的状态
 
 本轮在 `dev/browser-startup-memory` 本地修复审查发现的兼容问题，没有提交、推送、PR 或部署；按当前规则不执行新的页面测试。以下结果为当前修复的自动化证据，后文各批数量是历史记录。
