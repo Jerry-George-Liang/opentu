@@ -11,7 +11,7 @@ import {
 } from '../../utils/seedance-model';
 import type { ImageApiCompatibility } from '../../utils/settings-types';
 import {
-  isTuziGPTImageLegacyAlias,
+  isTuziGPTImageAlias,
   OFFICIAL_GPT_IMAGE_EDIT_REQUEST_SCHEMA,
   TUZI_GPT_IMAGE_EDIT_REQUEST_SCHEMA,
 } from '../model-adapters/image-request-schemas';
@@ -259,7 +259,7 @@ function resolveImageApiCompatibility(
 
   if (
     isTuziProfile(profile) &&
-    (isGptImageModel(model) || isTuziGPTImageLegacyAlias(model.id))
+    (isGptImageModel(model) || isTuziGPTImageAlias(model.id))
   ) {
     return 'tuzi-gpt-image';
   }
@@ -403,7 +403,7 @@ function inferImageBindings(
     isGeminiFamilyModel(model) && !isAsyncImageModel(model.id);
   const isGPTImageCompatibleModel =
     isGptImageModel(model) ||
-    (isTuziProfile(profile) && isTuziGPTImageLegacyAlias(model.id));
+    (isTuziProfile(profile) && isTuziGPTImageAlias(model.id));
   const isNanoBanana21 = model.id === 'gemini-nano-banana-2.1';
 
   if (isTuziProfile(profile) && model.id === 'flux-3-image') {
