@@ -1,3 +1,25 @@
+## 1.1.29 (2026-10-18)
+
+### 🚀 Features
+
+- 增加参考图保真开关及速度提醒 (#305) ([27d0e843](https://github.com/ljquan/opentu/commit/27d0e843))
+
+### 🩹 Fixes
+
+- 接入 Tuzi GPT Image 蒙版编辑 (#309) ([4c61ceae](https://github.com/ljquan/opentu/commit/4c61ceae))
+- 修复 Nano Banana 2.1 参考图 MIME 类型 (#307) ([fefd92f7](https://github.com/ljquan/opentu/commit/fefd92f7))
+
+### 🔧 Chores
+
+- 优化普通画布 @ 引用：缩略图标签与悬停预览 (#310) ([6536f997](https://github.com/ljquan/opentu/commit/6536f997))
+- 修复 Gemini 图片参数与生成结果加载恢复 (#308) ([76cb9a6e](https://github.com/ljquan/opentu/commit/76cb9a6e))
+- 新增：接入 Tuzi Suno v2 与原生音乐制作工作流 (#306) ([af3338d5](https://github.com/ljquan/opentu/commit/af3338d5))
+- 修复：改善生成文本卡片阅读并支持复制 (#304) ([8fea6ce0](https://github.com/ljquan/opentu/commit/8fea6ce0))
+
+### ❤️  Thank You
+
+- Liang <13642533686@163.com>
+
 ## 1.1.28 (2026-10-12)
 
 ### 🚀 Features
