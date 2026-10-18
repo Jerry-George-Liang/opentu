@@ -118,6 +118,7 @@ export const CanvasAssociationHighlight = forwardRef<HTMLDivElement, Props>(
             <AssociationChip
               key={reference.referenceId}
               segment={segment}
+              prompt={prompt}
               reference={reference}
               previewUrl={getAssociationPreviewUrl(
                 reference,
@@ -157,6 +158,7 @@ export const CanvasAssociationHighlight = forwardRef<HTMLDivElement, Props>(
 
 function AssociationChip({
   segment,
+  prompt,
   reference,
   previewUrl,
   selected,
@@ -164,6 +166,7 @@ function AssociationChip({
   onSelect,
 }: {
   segment: CanvasAssociationHighlightSegment;
+  prompt: string;
   reference: CanvasAssociationRef;
   previewUrl?: string;
   selected: boolean;
@@ -176,7 +179,7 @@ function AssociationChip({
     if (textRef.current) {
       setWrapped(textRef.current.getClientRects().length > 1);
     }
-  });
+  }, [prompt]);
   useLayoutEffect(() => {
     const text = textRef.current;
     if (!text) return;
