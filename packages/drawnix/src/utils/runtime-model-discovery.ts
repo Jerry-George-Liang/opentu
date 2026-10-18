@@ -25,6 +25,7 @@ import {
   setRuntimeModelConfigs,
 } from '../constants/model-config';
 import { normalizeModelApiBaseUrl } from './provider-base-url';
+import { isTuziCompatibleBaseUrl } from '../services/provider-routing/tuzi-api-endpoints';
 import {
   LEGACY_DEFAULT_PROVIDER_PROFILE_ID,
   providerCatalogsSettings,
@@ -1374,13 +1375,21 @@ function attachRuntimeSource(
   };
 }
 
-function refreshPersistedModelConfig(model: ModelConfig): ModelConfig {
+function refreshPersistedModelConfig(
+  model: ModelConfig,
+  useRemoteDisplayName = false
+): ModelConfig {
   if (isSunoV2Model(model.id) || isSunoNativeModel(model.id)) {
     return applySunoAliasPresentation({ ...model, type: 'audio' });
   }
   const staticConfig = getStaticModelConfig(model.id);
   if (staticConfig) {
-    return cloneModelConfig(staticConfig);
+    const refreshed = cloneModelConfig(staticConfig);
+    if (useRemoteDisplayName) {
+      refreshed.label = model.id;
+      refreshed.shortLabel = model.id;
+    }
+    return refreshed;
   }
 
   const lowerId = model.id.toLowerCase();
@@ -1401,9 +1410,20 @@ function decorateRuntimeModels(
   profileId: string,
   models: ModelConfig[]
 ): ModelConfig[] {
-  return models.map((model) =>
-    attachRuntimeSource(profileId, refreshPersistedModelConfig(model))
-  );
+  const profile = getProfileById(profileId);
+  const useRemoteDisplayName =
+    isTuziCompatibleBaseUrl(profile?.baseUrl) ||
+    profileId.startsWith('tuzi-managed-') ||
+    profileId.startsWith('tuzi-token-');
+  return models.map((model) => {
+    if ((model.tags || []).includes('manual')) {
+      return attachRuntimeSource(profileId, model);
+    }
+    const refreshed = refreshPersistedModelConfig(model, useRemoteDisplayName);
+    return attachRuntimeSource(profileId, useRemoteDisplayName
+      ? { ...refreshed, label: model.id, shortLabel: model.id }
+      : refreshed);
+  });
 }
 
 function decorateStaticModels(models: ModelConfig[]): ModelConfig[] {
@@ -1624,13 +1644,13 @@ class RuntimeModelDiscoveryStore {
     this.emit();
   };
 
-  private handlePricingSettingsChange = (): void => {
-    this.handleCatalogSettingsChange(providerCatalogsSettings.get());
-  };
-
   private handleProfileSettingsChange = (): void => {
     this.syncRuntimeModelConfigs();
     this.emit();
+  };
+
+  private handlePricingSettingsChange = (): void => {
+    this.handleCatalogSettingsChange(providerCatalogsSettings.get());
   };
 
   private handleActivePresetIdChange = (): void => {
@@ -2157,10 +2177,16 @@ class RuntimeModelDiscoveryStore {
 
     const adaptedModels: ModelConfig[] = [];
     const seen = new Set<string>();
+    const useRemoteDisplayName = isTuziCompatibleBaseUrl(normalizedBaseUrl);
     for (const item of data) {
-      const adapted = adaptRuntimeModel(item as RemoteModelListItem);
+      const remoteModel = item as RemoteModelListItem;
+      const adapted = adaptRuntimeModel(remoteModel);
       if (!adapted || seen.has(adapted.id)) {
         continue;
+      }
+      if (useRemoteDisplayName) {
+        adapted.label = remoteModel.id;
+        adapted.shortLabel = remoteModel.id;
       }
       seen.add(adapted.id);
       adaptedModels.push(attachRuntimeSource(profileId, adapted));

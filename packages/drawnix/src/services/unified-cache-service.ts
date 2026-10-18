@@ -148,6 +148,7 @@ export interface CachedMedia {
     resultVisibility?: TaskResultVisibility;
     params?: any;
     cacheWarning?: CacheWarning;
+    sourceUrl?: string;
     [key: string]: any;
   };
 }
