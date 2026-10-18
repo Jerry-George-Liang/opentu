@@ -47,6 +47,7 @@ import { useConfirmDialog } from '../dialog/ConfirmDialog';
 import { ImageUploadIcon, MediaLibraryIcon } from '../icons';
 import { useBoard } from '@plait-board/react-board';
 import { SelectedContentPreview } from '../shared/SelectedContentPreview';
+import { CanvasAssociationHighlight } from './CanvasAssociationHighlight';
 import { PromptOptimizeButton } from '../shared/PromptOptimizeButton';
 import { KnowledgeNoteContextSelector } from '../shared/KnowledgeNoteContextSelector';
 import {
@@ -301,7 +302,6 @@ import {
 import {
   appendCanvasAssociationRef,
   areCanvasAssociationRefsEqual,
-  buildCanvasAssociationHighlightSegments,
   findCanvasAssociationTrigger,
   getNextCanvasAssociationLabel,
   hasCanvasAssociationUntrustedInputType,
@@ -8092,11 +8092,6 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
         />
       ) : null;
     const inputContentPreview = selectedContentPreview;
-    const canvasAssociationHighlightSegments = useMemo(
-      () =>
-        buildCanvasAssociationHighlightSegments(prompt, canvasAssociationRefs),
-      [canvasAssociationRefs, prompt]
-    );
     const composerPreview = boundTargetError ? (
       <>
         <div className="ai-input-bar__bound-status ai-input-bar__bound-status--failed">
@@ -8535,26 +8530,16 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
                     </HoverTip>
                   ) : null}
                   {canvasAssociationRefs.length > 0 ? (
-                    <div
+                    <CanvasAssociationHighlight
                       ref={promptHighlightLayerRef}
-                      className="ai-input-bar__highlight-layer"
-                      aria-hidden="true"
-                    >
-                      {canvasAssociationHighlightSegments.map(
-                        (segment, index) => (
-                          <span
-                            key={`${segment.referenceId || 'text'}-${index}`}
-                            className={
-                              segment.referenceId
-                                ? 'ai-input-bar__highlight-tag ai-input-bar__highlight-tag--association'
-                                : 'ai-input-bar__highlight-text'
-                            }
-                          >
-                            {segment.text}
-                          </span>
-                        )
-                      )}
-                    </div>
+                      prompt={prompt}
+                      references={canvasAssociationRefs}
+                      boardId={currentBoardId}
+                      elements={SelectionWatcherBoardRef.current?.children || []}
+                      inputRef={inputRef}
+                      disabled={isSubmitting}
+                      expanded={shouldKeepExpanded}
+                    />
                   ) : null}
                   <textarea
                     ref={inputRef}
