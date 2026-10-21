@@ -295,6 +295,7 @@ import {
   resolveTaskbarDraftAfterSubmission,
   shouldBindGenerationTarget,
   shouldReleaseBoundTargetPromptDismissal,
+  shouldUseBoundTargetAsReference,
   shouldUseBoundTargetForSubmission,
   supportsBoundTargetFollowControls,
   storeBoundTargetTaskbarDraft,
@@ -4300,8 +4301,12 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
           suppression.nextSuppressedElementId;
         if (
           target &&
-          targetSupportsFollowControls &&
-          (suppression.suppressTarget || target.referenceOnly)
+          shouldUseBoundTargetAsReference(
+            generationType,
+            target.type,
+            suppression.suppressTarget,
+            target.referenceOnly
+          )
         ) {
           const referenceTarget =
             suppression.suppressTarget &&
@@ -4366,7 +4371,6 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
 
         lastBoundImageTargetKeyRef.current = targetKey;
         setBoundTargetError(null);
-        setGenerationType(target.type);
         if (activeDraftElementIdRef.current !== target.elementId) {
           saveActiveTaskbarDraft();
           dismissedPromptElementIdRef.current = null;
@@ -4414,6 +4418,7 @@ export const AIInputBar: React.FC<AIInputBarProps> = React.memo(
         currentBoardId,
         resetBoundTaskbarDraftsForBoard,
         saveActiveTaskbarDraft,
+        generationType,
         updatePromptSuggestion,
       ]
     );
