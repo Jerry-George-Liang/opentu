@@ -1,3 +1,18 @@
+## 1.2.2 (2026-10-25)
+
+### 🚀 Features
+
+- 完善图片编辑、视角回填、来源连线和模型获取 (#317) ([c898b4ee](https://github.com/ljquan/opentu/commit/c898b4ee))
+- 独立完善图片编辑缩放与视角回填 (#319) ([33ed4325](https://github.com/ljquan/opentu/commit/33ed4325))
+
+### 🩹 Fixes
+
+- 支持删除关联线并统一图片工具栏勾选样式 (#318) ([cc46efef](https://github.com/ljquan/opentu/commit/cc46efef))
+
+### ❤️  Thank You
+
+- Liang <13642533686@163.com>
+
 ## 1.2.1 (2026-10-22)
 
 ### 🚀 Features

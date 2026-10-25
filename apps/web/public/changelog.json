@@ -1,6 +1,22 @@
 {
   "versions": [
     {
+      "version": "1.2.2",
+      "date": "2026-10-25",
+      "changes": {
+        "features": [
+          "完善图片编辑、视角回填、来源连线和模型获取 (#317)",
+          "独立完善图片编辑缩放与视角回填 (#319)"
+        ],
+        "fixes": [
+          "支持删除关联线并统一图片工具栏勾选样式 (#318)"
+        ],
+        "improvements": []
+      },
+      "type": "patch",
+      "highlights": "完善图片编辑、视角回填、来源连线和模型获取 (#317)"
+    },
+    {
       "version": "1.2.1",
       "date": "2026-10-22",
       "changes": {
@@ -959,20 +975,6 @@
       },
       "type": "patch",
       "highlights": "reply to workflow image results"
-    },
-    {
-      "version": "1.0.0",
-      "date": "2026-05-26",
-      "changes": {
-        "features": [],
-        "fixes": [
-          "统一图片尺寸计算机制，修复批量插入叠加问题",
-          "修复图片尺寸相关问题（真实尺寸更新、批量插入叠加）"
-        ],
-        "improvements": []
-      },
-      "type": "major",
-      "highlights": "统一图片尺寸计算机制，修复批量插入叠加问题"
     }
   ]
 }
