@@ -164,6 +164,7 @@ describe('managed association line drawing', () => {
       [100, 40],
       [300, 40],
     ]);
+    expect(line.locked).toBe(false);
     expect(board.isHit(line, [200, 40])).toBe(true);
     expect(board.isHit(line, [200, 80])).toBe(false);
     expect(

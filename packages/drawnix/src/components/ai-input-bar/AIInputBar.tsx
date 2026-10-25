@@ -1372,6 +1372,8 @@ const SelectionWatcher: React.FC<{
     const onFrameSelectedRef = useRef(onFrameSelected);
     onFrameSelectedRef.current = onFrameSelected;
     const selectionRunIdRef = useRef(0);
+    const boundTargetRunIdRef = useRef(0);
+    const refreshSelectionRef = useRef<(() => void) | null>(null);
     const currentBoardIdRef = useRef(currentBoardId);
     currentBoardIdRef.current = currentBoardId;
 
@@ -1384,6 +1386,7 @@ const SelectionWatcher: React.FC<{
         const selectionBoardId = currentBoardIdRef.current;
         const runId = selectionRunIdRef.current + 1;
         selectionRunIdRef.current = runId;
+        const boundTargetRunId = ++boundTargetRunIdRef.current;
 
         const selectedElements =
           canvasAssociationPickElements ?? getSelectedElements(currentBoard);
@@ -1436,7 +1439,9 @@ const SelectionWatcher: React.FC<{
         ) {
           return;
         }
-        onBoundImageTargetChangeRef.current?.(boundImageTarget);
+        if (boundTargetRunId === boundTargetRunIdRef.current) {
+          onBoundImageTargetChangeRef.current?.(boundImageTarget);
+        }
 
         // 检测是否选中了单个 Frame，通知父组件
         if (
@@ -1590,6 +1595,7 @@ const SelectionWatcher: React.FC<{
       const handleSelectionRefresh = () => {
         void handleSelectionChange();
       };
+      refreshSelectionRef.current = handleSelectionRefresh;
       let viewportRaf: number | null = null;
       const handleViewportChange = () => {
         if (viewportRaf !== null) return;
@@ -1600,8 +1606,10 @@ const SelectionWatcher: React.FC<{
           const currentBoard = boardRef.current;
           if (!currentBoard) return;
           const selectionBoardId = currentBoardIdRef.current;
-          const runId = selectionRunIdRef.current + 1;
-          selectionRunIdRef.current = runId;
+          // Moving/zooming only refreshes the bound target's position. It must
+          // not cancel content still being extracted for the same selection.
+          const runId = selectionRunIdRef.current;
+          const boundTargetRunId = ++boundTargetRunIdRef.current;
           void resolveBoundImageTarget(
             currentBoard,
             getSelectedElements(currentBoard),
@@ -1609,6 +1617,7 @@ const SelectionWatcher: React.FC<{
           ).then((target) => {
             if (
               runId === selectionRunIdRef.current &&
+              boundTargetRunId === boundTargetRunIdRef.current &&
               selectionBoardId === currentBoardIdRef.current
             ) {
               onBoundImageTargetChangeRef.current?.(target);
@@ -1631,6 +1640,9 @@ const SelectionWatcher: React.FC<{
       );
 
       return () => {
+        selectionRunIdRef.current += 1;
+        boundTargetRunIdRef.current += 1;
+        refreshSelectionRef.current = null;
         document.removeEventListener('pointerup', handlePointerUp);
         document.removeEventListener('keyup', handleViewportChange);
         document.removeEventListener('pointermove', handleViewportChange);
@@ -1660,21 +1672,9 @@ const SelectionWatcher: React.FC<{
       const currentBoard = boardRef.current;
       const selectedElements = getSelectedElements(currentBoard);
       if (selectedElements.length !== 1) return;
-      const selectionBoardId = currentBoardIdRef.current;
-      const runId = selectionRunIdRef.current + 1;
-      selectionRunIdRef.current = runId;
-      void resolveBoundImageTarget(
-        currentBoard,
-        selectedElements,
-        semanticEditPrompt
-      ).then((target) => {
-        if (
-          runId === selectionRunIdRef.current &&
-          selectionBoardId === currentBoardIdRef.current
-        ) {
-          onBoundImageTargetChangeRef.current?.(target);
-        }
-      });
+      // Prompt changes can change target binding. Refresh content as well so
+      // replacing an in-flight selection never leaves an unbound image empty.
+      refreshSelectionRef.current?.();
     }, [semanticEditPrompt]);
 
     return null; // 这个组件不渲染任何内容
