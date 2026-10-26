@@ -1,6 +1,6 @@
 # 2026-10-26 预发布清单修复与本地验证
 
-本轮在 `/Users/lkj/Desktop/working/opentu-4`、`develop`、基线 `3386b632` 上诊断并修复 F1、F3、F4、F5。按用户明确要求，F2「GPT 自动比例 + 2K」不修复；GPT 适配器、尺寸矩阵和比例语义均无改动。保留同一工作区前一轮的参考连线显示开关。本轮仅有本地修改，没有提交、推送或部署。
+本轮在 `/Users/lkj/Desktop/working/opentu-4`、`develop`、基线 `3386b632` 上诊断并修复 F1、F3、F4、F5。按用户明确要求，F2「GPT 自动比例 + 2K」不修复；GPT 适配器、尺寸矩阵和比例语义均无改动。保留同一工作区前一轮的参考连线显示开关。以下先记录实现与实测阶段，用户随后授权的 PR 准备与最终验证见文末；尚未合并或部署。
 
 ## 问题、根因与处理
 
@@ -91,5 +91,17 @@ NODE_OPTIONS=--no-experimental-webstorage pnpm exec vitest run --config vitest.c
 | 窄屏滚动到更多并可下载 | [650px 视口](./assets/prerelease-fixes-20261026/toolbar-narrow-more.png) |
 | A3 刷新后仍显示原图像素 | [刷新后详情](./assets/prerelease-fixes-20261026/details-after-refresh.png) |
 | 点击菜单后画布显示入口仍独立提示 | [画布显示红点](./assets/prerelease-fixes-20261026/canvas-new-feature-dot.png) |
+
+## 2026-10-26 PR 提交前最终验证
+
+- 功能分支：`dev/canvas-prerelease-fixes-20261026`；目标：`ljquan/opentu:develop`，经显式 `git fetch upstream develop` 后为 `3386b6324377b1b558b0f4633906b21c4f6794a5`。执行 `git merge --no-edit upstream/develop` 返回 `Already up to date`，没有冲突，不需要冲突修补。
+- 提交前及同步后各执行一次定向回归：上文 13 个修复测试文件，加 `src/utils/feature-discovery.test.ts`、`src/hooks/use-feature-discovery.test.tsx`、`src/components/toolbar/app-toolbar/app-toolbar.test.tsx`、`src/components/toolbar/popup-toolbar/image-toolbar-contents.test.tsx`，同样使用 `NODE_OPTIONS=--no-experimental-webstorage pnpm exec vitest run --config vitest.config.ts ... --silent`。两次均为 17 个文件、175 项全部通过。
+- 同步后重新执行 `pnpm exec tsc -p packages/drawnix/tsconfig.lib.json --noEmit`、`pnpm exec tsc -p apps/web/tsconfig.app.json --noEmit`：均通过。
+- 同步后分别执行 `pnpm exec vite build --config apps/web/vite.config.ts --outDir <临时目录>/web-build`、`pnpm exec vite build --config apps/web/vite.sw.config.ts --outDir <临时目录>/sw-build`：均通过。没有运行会更新版本号的发布脚本，保留原版本 `1.2.2`；构建产物不提交。仍有原有 NPM_TOKEN 未设置、Sass、Browserslist、模块导入和大 chunk 等提示。
+- 对全部 33 个改动的 TypeScript/TSX 文件执行 ESLint：4 个错误、75 条警告。3 个有错误文件分别以 `git show upstream/develop:<path>` 输入同一 ESLint 配置，4 个错误的规则和消息均与上游完全一致；不宣称全量 lint 通过。相比前文的局部检查，这次包含全部改动文件。
+- 运行和包含类型的循环依赖检查均未完成：`node scripts/check-cycles.js` 与 `node scripts/check-cycles.js --include-types` 均在严格解析 `tsconfig.base.json` 第 25 行时失败；脚本和配置与目标分支完全相同。本轮没有扩展修改检查工具。
+- 最终差异检查通过。页面、真实 API 与本地回放沿用本次已完成的授权实测，未再次付费生成。未运行完整浏览器 E2E、预发布或生产验证；活动任务卡片/WorkZone 和单步撤销限制继续保留。
+
+本次 QA 和 DOC 沿用本文、`qa-feature-discovery.md` 及已有参考连线交接/QA 文档，不另建重复文档。新增截图为精选验收证据；原始生成图、认证凭据、临时回放脚本和构建产物均不纳入 PR。现有大文件仅修改相关入口，未为满足行数规范进行无关拆分。
 
 本轮无需新增依赖、环境变量、接口权限或数据迁移。使用方式和维护边界已合并在本 QA，不另建 DOC。回滚只需恢复本轮相应源码；新保存的 `imageNaturalSize` 为可忽略的元素附加元数据，旧版本仍可打开画板。
